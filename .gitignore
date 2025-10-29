@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# Arduino/PlatformIO
+.pio/
+.vscode/
+.pioenvs/
+.piolibdeps/
+*.hex
+*.elf
+*.bin
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+
+# Raspberry Pi
+*.pyc
+
+# Build files
+*.o
+*.a
+
+# Temporary files
+*.tmp
+*.bak
