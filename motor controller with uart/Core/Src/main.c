@@ -64,6 +64,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -86,7 +87,9 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-
+osThreadId defaultTaskHandle;
+osThreadId motorTaskHandle;
+osMessageQId uartCmdQueueHandle;
 /* USER CODE BEGIN PV */
 volatile uint8_t rx_data = 0;
 volatile bool new_command = false;
@@ -96,6 +99,9 @@ volatile bool uart_error = false;
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
+void StartDefaultTask(void const * argument);
+void StartMotorTask(void const * argument);
+
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -112,9 +118,10 @@ void GPIO_Init(void)
 {
     GPIO_InitTypeDef GPIO_InitStruct = {0};
     
-    /* Enable GPIOA and GPIOC clocks */
-    __HAL_RCC_GPIOA_CLK_ENABLE();
-    __HAL_RCC_GPIOC_CLK_ENABLE();
+  /* Enable GPIOA, GPIOB and GPIOC clocks */
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
     
     /* Configure Motor Control Pins (PA0-PA3) as Output */
     GPIO_InitStruct.Pin = MOTOR1_IN1_PIN | MOTOR1_IN2_PIN | MOTOR2_IN3_PIN | MOTOR2_IN4_PIN;
@@ -139,6 +146,16 @@ void GPIO_Init(void)
     /* Initialize LED pins to OFF */
     HAL_GPIO_WritePin(LED_PORT, LED_RX_PIN, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(LED_PORT, LED_TX_PIN, GPIO_PIN_RESET);
+
+  /* Configure Heartbeat LED (PB12) as Output */
+  GPIO_InitStruct.Pin = HEARTBEAT_LED_PIN;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(HEARTBEAT_LED_PORT, &GPIO_InitStruct);
+
+  /* Initialize Heartbeat LED to OFF */
+  HAL_GPIO_WritePin(HEARTBEAT_LED_PORT, HEARTBEAT_LED_PIN, GPIO_PIN_RESET);
     
     /* Configure UART Pins (PA9-TX, PA10-RX) */
     GPIO_InitStruct.Pin = UART_TX_PIN | UART_RX_PIN;
@@ -325,8 +342,12 @@ void USART1_IRQHandler(void)
         HAL_GPIO_TogglePin(LED_PORT, LED_RX_PIN);
         
         /* Read data register (clears RXNE flag) */
-        rx_data = (uint8_t)(USART1->DR & 0xFF);
-        new_command = true;
+    rx_data = (uint8_t)(USART1->DR & 0xFF);
+    /* Push received byte into the UART command queue (ISR-safe) */
+    if (uartCmdQueueHandle != NULL)
+    {
+      osMessagePut(uartCmdQueueHandle, rx_data, 0);
+    }
     }
     
     /* Check for TXE (Transmit Data Register Empty) - indicates TX activity */
@@ -412,35 +433,50 @@ int main(void)
 
   /* USER CODE END 2 */
 
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  /* start timers, add new ones, ... */
+  /* USER CODE END RTOS_TIMERS */
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* Create UART command queue (stores command bytes) */
+  osMessageQDef(uartCmdQueue, 32, uint16_t);
+  uartCmdQueueHandle = osMessageCreate(osMessageQ(uartCmdQueue), NULL);
+  /* USER CODE END RTOS_QUEUES */
+
+  /* Create the thread(s) */
+  /* definition and creation of defaultTask */
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
+  defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
+
+  /* definition and creation of motorTask */
+  osThreadDef(motorTask, StartMotorTask, osPriorityAboveNormal, 0, 256);
+  motorTaskHandle = osThreadCreate(osThread(motorTask), NULL);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  /* add threads, ... */
+  /* USER CODE END RTOS_THREADS */
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
     /* USER CODE END WHILE */
-
     /* USER CODE BEGIN 3 */
-    
-    /* Process new command if received */
-    if (new_command)
-    {
-        new_command = false;
-        Process_Command(rx_data);
-        uart_error = false;  // Clear error flag on successful command
-    }
-    
-    /* Safety check - emergency stop if no command */
-    Safety_Check();
-    
-    /* Handle UART errors */
-    if (uart_error)
-    {
-        // Optional: Stop motors on communication error
-        Motor_Stop();
-        uart_error = false;
-    }
-    
-    /* Small delay to prevent busy waiting */
-    HAL_Delay(10);
+    // Main loop is now managed by FreeRTOS tasks
+    osDelay(1000); // Idle loop, should never reach here
   }
   /* USER CODE END 3 */
 }
@@ -489,6 +525,79 @@ void SystemClock_Config(void)
 /* USER CODE BEGIN 4 */
 
 /* USER CODE END 4 */
+
+/* USER CODE BEGIN Header_StartDefaultTask */
+/**
+  * @brief  Function implementing the defaultTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartDefaultTask */
+void StartDefaultTask(void const * argument)
+{
+  /* USER CODE BEGIN 5 */
+  /* Housekeeping/idle task */
+  for(;;)
+  {
+  /* Blink a heartbeat so you can see the RTOS is running */
+  HAL_GPIO_TogglePin(HEARTBEAT_LED_PORT, HEARTBEAT_LED_PIN);
+    osDelay(250);
+  }
+  /* USER CODE END 5 */
+}
+
+/* USER CODE BEGIN 4_EXT */
+/**
+  * @brief  Function implementing the motorTask thread.
+  *         Receives UART bytes from queue and drives motors.
+  */
+void StartMotorTask(void const * argument)
+{
+  for(;;)
+  {
+    /* Wait up to 10ms for a new command */
+    osEvent evt = osMessageGet(uartCmdQueueHandle, 10);
+    if (evt.status == osEventMessage)
+    {
+        uint8_t cmd = (uint8_t)(evt.value.v & 0xFF);
+        Process_Command(cmd);
+        uart_error = false; // Clear error on good cmd
+    }
+
+    /* Periodic safety check */
+    Safety_Check();
+
+    /* If an error was flagged by IRQ, react safely */
+    if (uart_error)
+    {
+        Motor_Stop();
+        uart_error = false;
+    }
+  }
+}
+/* USER CODE END 4_EXT */
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM2 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM2)
+  {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.

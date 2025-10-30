@@ -69,9 +69,13 @@ void Error_Handler(void);
 #define MOTOR_PORT        GPIOA
 
 /* LED Indicator Pin Definitions */
-#define LED_RX_PIN        GPIO_PIN_13  // PC13 - RX Activity LED (User LED on many boards)
-#define LED_TX_PIN        GPIO_PIN_14  // PC14 - TX Activity LED (or use PA5, PA6, PA7)
+#define LED_RX_PIN        GPIO_PIN_13  // PC13 - RX Activity LED
+#define LED_TX_PIN        GPIO_PIN_14  // PC14 - TX Activity LED
 #define LED_PORT          GPIOC
+
+/* Heartbeat LED (separate from RX/TX indicators) */
+#define HEARTBEAT_LED_PIN   GPIO_PIN_12   // PB12 - Heartbeat LED
+#define HEARTBEAT_LED_PORT  GPIOB
 
 /* UART Pin Definitions - USART1 */
 #define UART_TX_PIN       GPIO_PIN_9   // PA9 - USART1_TX
