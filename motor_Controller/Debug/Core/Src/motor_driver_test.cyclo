@@ -1,0 +1,6 @@
+../Core/Src/motor_driver_test.c:16:6:MotorDriver_TestInitialize	2
+../Core/Src/motor_driver_test.c:27:6:MotorDriver_ApplyState	5
+../Core/Src/motor_driver_test.c:53:6:MotorDriver_TestRunSequence	2
+../Core/Src/motor_driver_test.c:69:13:MotorDriver_ConfigPins	1
+../Core/Src/motor_driver_test.c:82:13:MotorDriver_WritePattern	1
+../Core/Src/motor_driver_test.c:87:13:MotorDriver_Delay	2

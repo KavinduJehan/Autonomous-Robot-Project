@@ -1,0 +1,6 @@
+../Core/Src/motor_driver_test.c:16:6:MotorDriver_TestInitialize	8	static
+../Core/Src/motor_driver_test.c:27:6:MotorDriver_ApplyState	24	static
+../Core/Src/motor_driver_test.c:53:6:MotorDriver_TestRunSequence	16	static
+../Core/Src/motor_driver_test.c:69:13:MotorDriver_ConfigPins	32	static
+../Core/Src/motor_driver_test.c:82:13:MotorDriver_WritePattern	16	static
+../Core/Src/motor_driver_test.c:87:13:MotorDriver_Delay	16	static,ignoring_inline_asm
