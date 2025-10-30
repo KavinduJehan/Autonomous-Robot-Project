@@ -1,0 +1,32 @@
+# Python Requirements for Raspberry Pi Motor Controller
+# Install with: pip install -r requirements.txt
+
+# Serial communication (async)
+pyserial-asyncio>=0.6
+
+# GPIO control for Raspberry Pi
+RPi.GPIO>=0.7.1
+
+# Better keyboard input (optional but recommended)
+aioconsole>=0.6.0
+
+# Additional useful packages (optional)
+# Uncomment if needed:
+
+# For web interface
+# flask>=2.3.0
+# flask-cors>=4.0.0
+
+# For sensor integration
+# adafruit-circuitpython-hcsr04>=3.2.0  # Ultrasonic sensor
+# adafruit-circuitpython-vl53l0x>=3.6.0  # Time-of-flight sensor
+
+# For camera integration
+# picamera2>=0.3.0  # Pi Camera v2/v3
+
+# For logging
+# colorlog>=6.7.0
+
+# For remote control
+# websockets>=11.0
+# asyncio-mqtt>=0.16.0
