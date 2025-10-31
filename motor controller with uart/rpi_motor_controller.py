@@ -79,6 +79,7 @@ class MotorCommand(Enum):
     ACCEL_ENABLE = b'M'    # Enable smooth acceleration/deceleration
     ACCEL_DISABLE = b'Z'   # Disable (instant speed changes)
     ACCEL_DISABLE_ALT = b'D'  # Alternate disable command
+    ULTRASONIC_PING = b'U'  # Request ultrasonic distance measurement
     
     def __str__(self):
         return self.name.capitalize().replace('_', ' ')
@@ -381,6 +382,11 @@ class MotorController:
         await self.stop()
         print("✓ Emergency stop reset")
     
+    async def request_ultrasonic_ping(self):
+        """Request ultrasonic distance measurement from STM32."""
+        await self._send_command(MotorCommand.ULTRASONIC_PING)
+        print("📡 Ultrasonic ping sent (check UART output for: 'US A=xxcm B=yycm')")
+    
     async def _heartbeat_loop(self):
         """
         Send periodic commands to prevent STM32 safety timeout.
@@ -456,7 +462,9 @@ class InteractiveController:
         print("\n🚀 Acceleration:")
         print("  M - Enable Smooth Accel/Decel")
         print("  Z - Disable Accel (Instant)")
-        print("\n� Safety & System:")
+        print("\n📡 Sensors:")
+        print("  U - Ultrasonic Ping (check wall distances)")
+        print("\n🛡 Safety & System:")
         print("  E - Emergency Stop")
         print("  R - Reset Emergency Stop")
         print("  I - Info")
@@ -508,6 +516,8 @@ class InteractiveController:
                     await self.motor.enable_acceleration()
                 elif cmd == 'z':
                     await self.motor.disable_acceleration()
+                elif cmd == 'u':
+                    await self.motor.request_ultrasonic_ping()
                 elif cmd == 'e':
                     await self.motor.stop()
                     self.motor.emergency_stop_active = True

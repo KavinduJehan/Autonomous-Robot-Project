@@ -154,6 +154,8 @@ void Error_Handler(void);
 #define CMD_ACCEL_DISABLE_ALT 'D' // Alternate disable (was used for this before)
 /* Self-test command to cycle PWM speeds/directions (manual only) */
 #define CMD_SELF_TEST     'X'
+/* Ultrasonic debug command */
+#define CMD_ULTRASONIC_PING 'U'
 
 /* Enable a short PWM self-test at boot (runs once inside motor task). Set to 0 to disable. */
 #define ENABLE_PWM_SELF_TEST   0
@@ -189,6 +191,11 @@ void Ultrasonic_Task(void const * argument);
 
 /* Differential forward drive (arc steering) */
 void Motor_ForwardDifferential(uint8_t left_speed, uint8_t right_speed);
+
+/* UART debug helpers (optional) */
+void UART_SendString(const char* s);
+void UART_SendUInt(uint32_t v);
+void UART_SendCRLF(void);
 
 /* USER CODE END Private defines */
 

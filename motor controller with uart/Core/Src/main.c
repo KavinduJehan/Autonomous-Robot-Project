@@ -237,6 +237,33 @@ bool Ultrasonic_CheckCollision(void)
 }
 #endif /* ULTRASONIC_ENABLED */
 
+/* Minimal UART TX helpers for debug (polling) */
+void UART_SendString(const char* s)
+{
+    while (*s)
+    {
+        while (!(USART1->SR & USART_SR_TXE)) { }
+        USART1->DR = (uint8_t)(*s++);
+    }
+}
+
+void UART_SendUInt(uint32_t v)
+{
+    char buf[11];
+    int i = 0;
+    if (v == 0) { while (!(USART1->SR & USART_SR_TXE)) { } USART1->DR = '0'; return; }
+    while (v && i < (int)sizeof(buf)) { buf[i++] = '0' + (v % 10); v /= 10; }
+    while (i--) { while (!(USART1->SR & USART_SR_TXE)) { } USART1->DR = (uint8_t)buf[i]; }
+}
+
+void UART_SendCRLF(void)
+{
+    while (!(USART1->SR & USART_SR_TXE)) { }
+    USART1->DR = '\r';
+    while (!(USART1->SR & USART_SR_TXE)) { }
+    USART1->DR = '\n';
+}
+
 /**
  * @brief  Initialize GPIO pins for motor control
  * @note   Configures PA0-PA3 as PWM output pins (TIM3 alternate function)
@@ -583,7 +610,9 @@ void Motor_Right(uint8_t speed)
  */
 void Motor_ForwardDifferential(uint8_t left_speed, uint8_t right_speed)
 {
-    Motor_SetSpeed_Smooth(left_speed, 0, right_speed, 0);
+    // Make steering corrections instantaneous to avoid contention with the main
+    // smooth ramp logic and keep wall-following responsive.
+    Motor_SetSpeed(left_speed, 0, right_speed, 0);
 }
 
 /**
@@ -739,6 +768,19 @@ void Process_Command(uint8_t cmd)
             accel_enabled = prev_accel;
             break;
         }
+
+        case CMD_ULTRASONIC_PING: // 'U' - measure and print distances
+        {
+#if ULTRASONIC_ENABLED
+            uint16_t a = Ultrasonic_MeasureA();
+            osDelay(5);
+            uint16_t b = Ultrasonic_MeasureB();
+            UART_SendString("US A="); UART_SendUInt(a); UART_SendString("cm B="); UART_SendUInt(b); UART_SendCRLF();
+#else
+            UART_SendString("US disabled\r\n");
+#endif
+            break;
+        }
             
         default:
             // Invalid command - do nothing or stop for safety
@@ -760,6 +802,9 @@ void Safety_Check(void)
     if ((HAL_GetTick() - last_command_time) > SAFETY_TIMEOUT_MS)
     {
         Motor_Stop();
+        // Ensure background tasks don't re-drive the motors after a timeout
+        motors_moving = false;
+        last_movement_cmd = CMD_STOP;
     }
 }
 
