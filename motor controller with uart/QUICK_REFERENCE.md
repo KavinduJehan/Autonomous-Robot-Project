@@ -49,17 +49,36 @@ python uart_test.py /dev/ttyUSB0  # Linux
 
 ## 🎮 Commands
 
-| Key | Hex | Action | Pin States |
-|-----|-----|--------|------------|
-| `F` | 0x46 | Forward | PA0=1, PA1=0, PA2=1, PA3=0 |
-| `R` | 0x52 | Reverse | PA0=0, PA1=1, PA2=0, PA3=1 |
-| `L` | 0x4C | Left Turn | PA0=0, PA1=1, PA2=1, PA3=0 |
-| `T` | 0x54 | Right Turn | PA0=1, PA1=0, PA2=0, PA3=1 |
-| `S` | 0x53 | Stop | All pins = 0 |
+### Movement Commands
+| Key | Hex | Action | Behavior |
+|-----|-----|--------|----------|
+| `F` | 0x46 | Forward | Both motors forward at current speed |
+| `R` | 0x52 | Reverse | Both motors backward at current speed |
+| `L` | 0x4C | Left Turn | Left reverse, right forward (spot turn) |
+| `T` | 0x54 | Right Turn | Left forward, right reverse (spot turn) |
+| `S` | 0x53 | Stop | All motors stop (PWM = 0%) |
+
+### Speed Control Commands (PWM)
+| Key | Hex | Speed Level | PWM Duty | Use Case |
+|-----|-----|-------------|----------|----------|
+| `1` | 0x31 | SLOW | 40% | Precise movements, wall following |
+| `2` | 0x32 | MEDIUM | 70% | Normal operation (default) |
+| `3` | 0x33 | FAST | 100% | Maximum speed |
+
+**Note**: Speed commands change the speed for subsequent movement commands.
 
 ---
 
 ## 🔧 Register Values
+
+### TIM3 PWM Configuration
+```c
+Prescaler:  15        // 16MHz / (15+1) = 1MHz timer clock
+Period:     999       // 1MHz / (999+1) = 1kHz PWM
+Frequency:  1 kHz     // PWM frequency
+Channels:   CH1-CH4   // PA0-PA3
+Resolution: 0-100%    // Duty cycle control
+```
 
 ### USART1 Registers
 ```c
@@ -100,14 +119,17 @@ APB2:       16 MHz (USART1 clock)
 3. Should receive 'A' back
 ```
 
-### Test 2: Motor Test
+### Test 2: Motor Test with Speed Control
 ```
-Send: F  → Motors forward
+Send: 2  → Set medium speed (70%)
+Send: F  → Motors forward at 70%
 Send: S  → Motors stop
-Send: R  → Motors reverse
+Send: 1  → Set slow speed (40%)
+Send: R  → Motors reverse at 40%
 Send: S  → Motors stop
-Send: L  → Left turn
-Send: T  → Right turn
+Send: 3  → Set fast speed (100%)
+Send: L  → Left turn at 100%
+Send: T  → Right turn at 100%
 Send: S  → Final stop
 ```
 
@@ -174,10 +196,12 @@ python uart_test.py /dev/ttyUSB0
 ## 📊 Pin Summary
 
 ```
-Motor Control:    PA0, PA1, PA2, PA3
-UART:             PA9(TX), PA10(RX)
-Alternate Func:   AF7 (USART1)
-Ground:           GND (common)
+Motor Control PWM:  PA0 (TIM3_CH1), PA1 (TIM3_CH2), 
+                    PA2 (TIM3_CH3), PA3 (TIM3_CH4)
+UART:               PA9(TX), PA10(RX)
+LED Indicators:     PC13 (RX), PC14 (TX), PB12 (Heartbeat)
+Alternate Func:     AF2 (TIM3), AF7 (USART1)
+Ground:             GND (common)
 ```
 
 ---
@@ -209,11 +233,22 @@ PC15: Timeout Status (on when timeout)
 
 To change commands, edit in `main.h`:
 ```c
+// Movement Commands
 #define CMD_FORWARD       'F'  // Change to your char
 #define CMD_REVERSE       'R'
 #define CMD_LEFT          'L'
 #define CMD_RIGHT         'T'
 #define CMD_STOP          'S'
+
+// Speed Commands
+#define CMD_SPEED_SLOW    '1'  // 40% PWM
+#define CMD_SPEED_MEDIUM  '2'  // 70% PWM
+#define CMD_SPEED_FAST    '3'  // 100% PWM
+
+// Speed Levels (percentage)
+#define SPEED_SLOW        40
+#define SPEED_MEDIUM      70
+#define SPEED_FAST        100
 ```
 
 ---
@@ -229,6 +264,42 @@ USART1->BRR = 0x008B;
 // Update header:
 #define UART_BAUDRATE     115200
 ```
+
+---
+
+## ⚙️ PWM Tuning
+
+### Changing PWM Frequency
+```c
+// In main.h:
+#define PWM_PRESCALER     15    // Change for different freq
+#define PWM_PERIOD        999   
+
+// Formula: PWM_freq = 16MHz / ((PSC+1) * (PERIOD+1))
+// Example: 16MHz / (16 * 1000) = 1 kHz
+
+// For 10 kHz PWM:
+#define PWM_PRESCALER     15    // 16MHz / 16 = 1MHz
+#define PWM_PERIOD        99    // 1MHz / 100 = 10kHz
+```
+
+### Custom Speed Levels
+```c
+// In main.h, adjust percentage values:
+#define SPEED_SLOW        30    // Very slow (30%)
+#define SPEED_MEDIUM      60    // Medium (60%)
+#define SPEED_FAST        90    // Fast but not max (90%)
+
+// Or add new levels:
+#define SPEED_CRAWL       20    // Ultra slow
+#define SPEED_TURBO       100   // Maximum
+```
+
+### Testing PWM Output
+Use oscilloscope or multimeter:
+- **1 kHz PWM at 50%**: Average voltage = 1.65V (3.3V × 0.5)
+- **1 kHz PWM at 70%**: Average voltage = 2.31V (3.3V × 0.7)
+- Connect probe to PA0-PA3 and GND
 
 ---
 

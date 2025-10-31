@@ -22,14 +22,14 @@
   * @description
   * This firmware implements a UART-controlled motor driver system using the 
   * STM32F401RC microcontroller. The robot receives commands via USART1 to 
-  * control two DC motors through an MX1508 H-bridge driver with PWM speed control.
+  * control two DC motors through an MX1508 H-bridge driver.
   * 
- * @hardware_connections
- * Motor Driver (MX1508) - PWM Control via TIM5:
- *   PA0 -> IN1 (Motor 1 Forward)  - TIM5_CH1
- *   PA1 -> IN2 (Motor 1 Reverse)  - TIM5_CH2
- *   PA2 -> IN3 (Motor 2 Forward)  - TIM5_CH3
- *   PA3 -> IN4 (Motor 2 Reverse)  - TIM5_CH4
+  * @hardware_connections
+  * Motor Driver (MX1508):
+  *   PA0 -> IN1 (Motor 1 Forward)
+  *   PA1 -> IN2 (Motor 1 Reverse)
+  *   PA2 -> IN3 (Motor 2 Forward)
+  *   PA3 -> IN4 (Motor 2 Reverse)
   * 
   * UART (USART1):
   *   PA9  -> TX (Connect to RX of USB-Serial adapter)
@@ -42,31 +42,12 @@
   *   Data Bits: 8, Stop Bits: 1, Parity: None
   *   Alternate Function: AF7
   * 
- * @pwm_configuration
- *   Timer: TIM5 (APB1)
-  *   PWM Frequency: 1 kHz
-  *   Prescaler: 15 (16MHz / 16 = 1MHz timer clock)
-  *   Period: 999 (1MHz / 1000 = 1kHz PWM)
-  *   Resolution: 0-100% duty cycle
-  * 
-  * @acceleration_configuration
-  *   Acceleration Step: 5% per 20ms (smooth ramp-up)
-  *   Deceleration Step: 10% per 15ms (faster ramp-down)
-  *   Total Accel Time: ~400ms (0% to 100%)
-  *   Total Decel Time: ~150ms (100% to 0%)
-  *   Toggle: 'A' enable, 'D' disable
-  * 
   * @commands
-  *   'F' (0x46) - Forward:  Both motors forward at current speed
-  *   'R' (0x52) - Reverse:  Both motors backward at current speed
+  *   'F' (0x46) - Forward:  Both motors forward
+  *   'R' (0x52) - Reverse:  Both motors backward
   *   'L' (0x4C) - Left:     Left motor reverse, right forward (spot turn)
   *   'T' (0x54) - Right:    Left motor forward, right reverse (spot turn)
   *   'S' (0x53) - Stop:     Both motors stop
-  *   '1' (0x31) - Speed:    Set speed to SLOW (40%)
-  *   '2' (0x32) - Speed:    Set speed to MEDIUM (70%)
-  *   '3' (0x33) - Speed:    Set speed to FAST (100%)
-  *   'A' (0x41) - Accel:    Enable smooth acceleration/deceleration
-  *   'D' (0x44) - Accel:    Disable smooth ramping (instant response)
   * 
   * @safety_features
   *   - Emergency timeout: Motors stop if no command for 2 seconds
@@ -75,8 +56,8 @@
   *   - Safe initialization: Motors stopped at startup
   * 
   * @author        Robot Project Team
-  * @date          October 31, 2025
-  * @version       2.1 - Added Acceleration/Deceleration
+  * @date          October 30, 2025
+  * @version       1.0
   * 
   ******************************************************************************
   */
@@ -106,29 +87,33 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-TIM_HandleTypeDef htim5;
-osThreadId defaultTaskHandle;
-osThreadId motorTaskHandle;
+ADC_HandleTypeDef hadc1;
+
+TIM_HandleTypeDef htim4;
+
 osMessageQId uartCmdQueueHandle;
+
+osThreadId defaultTaskHandle;
 /* USER CODE BEGIN PV */
 volatile uint8_t rx_data = 0;
 volatile bool new_command = false;
 volatile uint32_t last_command_time = 0;
 volatile bool uart_error = false;
-volatile uint8_t current_speed = SPEED_MEDIUM;  // Default speed
-volatile bool accel_enabled = ACCEL_ENABLED;    // Acceleration/deceleration enable
-
-// Current PWM values for smooth ramping
-volatile uint8_t current_m1_in1 = 0;
-volatile uint8_t current_m1_in2 = 0;
-volatile uint8_t current_m2_in3 = 0;
-volatile uint8_t current_m2_in4 = 0;
+/* IR sensor shared state */
+volatile uint16_t ir_left_raw = 0;
+volatile uint16_t ir_right_raw = 0;
+volatile bool ir_left_close = false;
+volatile bool ir_right_close = false;
+/* Tunable thresholds (12-bit ADC). Start conservative; we'll tune by test. */
+static uint16_t IR_CLOSE_THRESHOLD = 2000; // adjust based on sensor
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_TIM4_Init(void);
+static void MX_ADC1_Init(void);
 void StartDefaultTask(void const * argument);
-void StartMotorTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -139,7 +124,7 @@ void StartMotorTask(void const * argument);
 
 /**
  * @brief  Initialize GPIO pins for motor control
- * @note   Configures PA0-PA3 as PWM output pins (TIM3 alternate function)
+ * @note   Configures PA0-PA3 as output pins for MX1508 motor driver
  * @retval None
  */
 void GPIO_Init(void)
@@ -151,13 +136,18 @@ void GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
     
-    /* Configure Motor Control Pins (PA0-PA3) as TIM5 PWM Output (AF2) */
+    /* Configure Motor Control Pins (PA0-PA3) as Output */
     GPIO_InitStruct.Pin = MOTOR1_IN1_PIN | MOTOR1_IN2_PIN | MOTOR2_IN3_PIN | MOTOR2_IN4_PIN;
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;          // Alternate Function Push-Pull
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    GPIO_InitStruct.Alternate = GPIO_AF2_TIM5;       // TIM5 Alternate Function
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(MOTOR_PORT, &GPIO_InitStruct);
+    
+    /* Initialize all motor pins to LOW (stopped state) */
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR1_IN1_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR1_IN2_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR2_IN3_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR2_IN4_PIN, GPIO_PIN_RESET);
     
     /* Configure LED Indicator Pins (PC13, PC14) as Output */
     GPIO_InitStruct.Pin = LED_RX_PIN | LED_TX_PIN;
@@ -187,72 +177,45 @@ void GPIO_Init(void)
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
     GPIO_InitStruct.Alternate = UART_AF;
     HAL_GPIO_Init(UART_PORT, &GPIO_InitStruct);
+
+  /* Configure IR sensor pins (PA4, PA5) as Analog */
+  GPIO_InitStruct.Pin = IR_LEFT_PIN | IR_RIGHT_PIN;
+  GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(IR_SENSOR_PORT, &GPIO_InitStruct);
 }
 
-/**
- * @brief  Initialize TIM3 for PWM generation on motor control pins
- * @note   TIM5_CH1 -> PA0 (Motor1_IN1)
- *         TIM5_CH2 -> PA1 (Motor1_IN2)
- *         TIM5_CH3 -> PA2 (Motor2_IN3)
- *         TIM5_CH4 -> PA3 (Motor2_IN4)
- *         PWM Frequency: 1 kHz
- * @retval None
- */
-void TIM5_PWM_Init(void)
+
+
+void IR_Init(void)
 {
-    TIM_OC_InitTypeDef sConfigOC = {0};
-    
-    /* Enable TIM5 clock */
-    __HAL_RCC_TIM5_CLK_ENABLE();
-    
-    /* Configure TIM5 Base */
-    htim5.Instance = TIM5;
-    htim5.Init.Prescaler = PWM_PRESCALER;              // 16MHz / (15+1) = 1MHz
-    htim5.Init.CounterMode = TIM_COUNTERMODE_UP;
-    htim5.Init.Period = PWM_PERIOD;                    // 1MHz / (999+1) = 1kHz PWM
-    htim5.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-    htim5.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
-    
-    if (HAL_TIM_PWM_Init(&htim5) != HAL_OK)
-    {
-        Error_Handler();
-    }
-    
-    /* Configure PWM channels */
-    sConfigOC.OCMode = TIM_OCMODE_PWM1;
-    sConfigOC.Pulse = 0;                               // Start with 0% duty cycle
-    sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-    sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-    
-    /* Channel 1 - PA0 (Motor1_IN1) */
-    if (HAL_TIM_PWM_ConfigChannel(&htim5, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
-    {
-        Error_Handler();
-    }
-    
-    /* Channel 2 - PA1 (Motor1_IN2) */
-    if (HAL_TIM_PWM_ConfigChannel(&htim5, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
-    {
-        Error_Handler();
-    }
-    
-    /* Channel 3 - PA2 (Motor2_IN3) */
-    if (HAL_TIM_PWM_ConfigChannel(&htim5, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
-    {
-        Error_Handler();
-    }
-    
-    /* Channel 4 - PA3 (Motor2_IN4) */
-    if (HAL_TIM_PWM_ConfigChannel(&htim5, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
-    {
-        Error_Handler();
-    }
-    
-    /* Start PWM on all channels */
-    HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_1);
-    HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_2);
-    HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_3);
-    HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_4);
+  MX_ADC1_Init();
+}
+
+void IR_ReadRaw(uint16_t* left, uint16_t* right)
+{
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* Read Left (PA4 / ADC_CHANNEL_4) */
+  sConfig.Channel = ADC_CHANNEL_4;
+  sConfig.Rank = 1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_84CYCLES;
+  HAL_ADC_ConfigChannel(&hadc1, &sConfig);
+  HAL_ADC_Start(&hadc1);
+  HAL_ADC_PollForConversion(&hadc1, 10);
+  uint16_t l = (uint16_t)HAL_ADC_GetValue(&hadc1);
+  HAL_ADC_Stop(&hadc1);
+
+  /* Read Right (PA5 / ADC_CHANNEL_5) */
+  sConfig.Channel = ADC_CHANNEL_5;
+  HAL_ADC_ConfigChannel(&hadc1, &sConfig);
+  HAL_ADC_Start(&hadc1);
+  HAL_ADC_PollForConversion(&hadc1, 10);
+  uint16_t r = (uint16_t)HAL_ADC_GetValue(&hadc1);
+  HAL_ADC_Stop(&hadc1);
+
+  if (left)  *left  = l;
+  if (right) *right = r;
 }
 
 /**
@@ -307,152 +270,63 @@ void USART1_Init(void)
 }
 
 /**
- * @brief  Set motor speeds using PWM
- * @param  motor1_in1: PWM duty cycle for Motor 1 Forward (0-100%)
- * @param  motor1_in2: PWM duty cycle for Motor 1 Reverse (0-100%)
- * @param  motor2_in3: PWM duty cycle for Motor 2 Forward (0-100%)
- * @param  motor2_in4: PWM duty cycle for Motor 2 Reverse (0-100%)
+ * @brief  Motor Forward - Both motors forward
  * @retval None
  */
-void Motor_SetSpeed(uint8_t motor1_in1, uint8_t motor1_in2, uint8_t motor2_in3, uint8_t motor2_in4)
+void Motor_Forward(void)
 {
-    // Convert percentage (0-100) to PWM value (0-PWM_PERIOD)
-    uint32_t pwm1_in1 = (motor1_in1 * PWM_PERIOD) / 100;
-    uint32_t pwm1_in2 = (motor1_in2 * PWM_PERIOD) / 100;
-    uint32_t pwm2_in3 = (motor2_in3 * PWM_PERIOD) / 100;
-    uint32_t pwm2_in4 = (motor2_in4 * PWM_PERIOD) / 100;
-    
-    // Set PWM duty cycles
-    __HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_1, pwm1_in1);  // Motor1 IN1
-    __HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_2, pwm1_in2);  // Motor1 IN2
-    __HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_3, pwm2_in3);  // Motor2 IN3
-    __HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_4, pwm2_in4);  // Motor2 IN4
-    
-    // Update current values
-    current_m1_in1 = motor1_in1;
-    current_m1_in2 = motor1_in2;
-    current_m2_in3 = motor2_in3;
-    current_m2_in4 = motor2_in4;
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR1_IN1_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR1_IN2_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR2_IN3_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR2_IN4_PIN, GPIO_PIN_RESET);
 }
 
 /**
- * @brief  Set motor speeds with smooth acceleration/deceleration
- * @param  target_m1_in1: Target PWM duty cycle for Motor 1 Forward (0-100%)
- * @param  target_m1_in2: Target PWM duty cycle for Motor 1 Reverse (0-100%)
- * @param  target_m2_in3: Target PWM duty cycle for Motor 2 Forward (0-100%)
- * @param  target_m2_in4: Target PWM duty cycle for Motor 2 Reverse (0-100%)
- * @note   Gradually ramps from current speed to target speed
+ * @brief  Motor Reverse - Both motors backward
  * @retval None
  */
-void Motor_SetSpeed_Smooth(uint8_t target_m1_in1, uint8_t target_m1_in2, uint8_t target_m2_in3, uint8_t target_m2_in4)
+void Motor_Reverse(void)
 {
-    // If acceleration is disabled, set speed instantly
-    if (!accel_enabled)
-    {
-        Motor_SetSpeed(target_m1_in1, target_m1_in2, target_m2_in3, target_m2_in4);
-        return;
-    }
-    
-    // Determine if we're accelerating or decelerating
-    uint8_t current_total = current_m1_in1 + current_m1_in2 + current_m2_in3 + current_m2_in4;
-    uint8_t target_total = target_m1_in1 + target_m1_in2 + target_m2_in3 + target_m2_in4;
-    
-    bool is_accelerating = (target_total > current_total);
-    uint8_t step = is_accelerating ? ACCEL_STEP : DECEL_STEP;
-    uint16_t delay_ms = is_accelerating ? ACCEL_DELAY_MS : DECEL_DELAY_MS;
-    
-    // Ramp up/down gradually
-    while (current_m1_in1 != target_m1_in1 || current_m1_in2 != target_m1_in2 ||
-           current_m2_in3 != target_m2_in3 || current_m2_in4 != target_m2_in4)
-    {
-        // Ramp motor 1 IN1
-        if (current_m1_in1 < target_m1_in1)
-            current_m1_in1 = (current_m1_in1 + step > target_m1_in1) ? target_m1_in1 : current_m1_in1 + step;
-        else if (current_m1_in1 > target_m1_in1)
-            current_m1_in1 = (current_m1_in1 < step || current_m1_in1 - step < target_m1_in1) ? target_m1_in1 : current_m1_in1 - step;
-        
-        // Ramp motor 1 IN2
-        if (current_m1_in2 < target_m1_in2)
-            current_m1_in2 = (current_m1_in2 + step > target_m1_in2) ? target_m1_in2 : current_m1_in2 + step;
-        else if (current_m1_in2 > target_m1_in2)
-            current_m1_in2 = (current_m1_in2 < step || current_m1_in2 - step < target_m1_in2) ? target_m1_in2 : current_m1_in2 - step;
-        
-        // Ramp motor 2 IN3
-        if (current_m2_in3 < target_m2_in3)
-            current_m2_in3 = (current_m2_in3 + step > target_m2_in3) ? target_m2_in3 : current_m2_in3 + step;
-        else if (current_m2_in3 > target_m2_in3)
-            current_m2_in3 = (current_m2_in3 < step || current_m2_in3 - step < target_m2_in3) ? target_m2_in3 : current_m2_in3 - step;
-        
-        // Ramp motor 2 IN4
-        if (current_m2_in4 < target_m2_in4)
-            current_m2_in4 = (current_m2_in4 + step > target_m2_in4) ? target_m2_in4 : current_m2_in4 + step;
-        else if (current_m2_in4 > target_m2_in4)
-            current_m2_in4 = (current_m2_in4 < step || current_m2_in4 - step < target_m2_in4) ? target_m2_in4 : current_m2_in4 - step;
-        
-        // Apply current values
-        Motor_SetSpeed(current_m1_in1, current_m1_in2, current_m2_in3, current_m2_in4);
-        
-        // Delay for smooth ramping
-        osDelay(delay_ms);
-    }
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR1_IN1_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR1_IN2_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR2_IN3_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR2_IN4_PIN, GPIO_PIN_SET);
 }
 
 /**
- * @brief  Motor Forward - Both motors forward at specified speed
- * @param  speed: Motor speed (0-100%)
+ * @brief  Motor Left - Left motor reverse, right motor forward
  * @retval None
  */
-void Motor_Forward(uint8_t speed)
+void Motor_Left(void)
 {
-    Motor_SetSpeed_Smooth(speed, 0, speed, 0);
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR1_IN1_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR1_IN2_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR2_IN3_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR2_IN4_PIN, GPIO_PIN_RESET);
 }
 
 /**
- * @brief  Motor Reverse - Both motors backward at specified speed
- * @param  speed: Motor speed (0-100%)
+ * @brief  Motor Right - Left motor forward, right motor reverse
  * @retval None
  */
-void Motor_Reverse(uint8_t speed)
+void Motor_Right(void)
 {
-    Motor_SetSpeed_Smooth(0, speed, 0, speed);
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR1_IN1_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR1_IN2_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR2_IN3_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR2_IN4_PIN, GPIO_PIN_SET);
 }
 
 /**
- * @brief  Motor Left - Left motor reverse, right motor forward (spot turn)
- * @param  speed: Motor speed (0-100%)
- * @retval None
- */
-void Motor_Left(uint8_t speed)
-{
-    Motor_SetSpeed_Smooth(0, speed, speed, 0);
-}
-
-/**
- * @brief  Motor Right - Left motor forward, right motor reverse (spot turn)
- * @param  speed: Motor speed (0-100%)
- * @retval None
- */
-void Motor_Right(uint8_t speed)
-{
-    Motor_SetSpeed_Smooth(speed, 0, 0, speed);
-}
-
-/**
- * @brief  Motor Stop - All motors off (instant stop)
+ * @brief  Motor Stop - All motors off
  * @retval None
  */
 void Motor_Stop(void)
 {
-    Motor_SetSpeed(0, 0, 0, 0);
-}
-
-/**
- * @brief  Motor Stop - All motors off with smooth deceleration
- * @retval None
- */
-void Motor_Stop_Smooth(void)
-{
-    Motor_SetSpeed_Smooth(0, 0, 0, 0);
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR1_IN1_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR1_IN2_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR2_IN3_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(MOTOR_PORT, MOTOR2_IN4_PIN, GPIO_PIN_RESET);
 }
 
 /**
@@ -465,65 +339,24 @@ void Process_Command(uint8_t cmd)
     switch(cmd)
     {
         case CMD_FORWARD:
-            Motor_Forward(current_speed);
+            Motor_Forward();
             break;
             
         case CMD_REVERSE:
-            Motor_Reverse(current_speed);
+            Motor_Reverse();
             break;
             
         case CMD_LEFT:
-            Motor_Left(current_speed);
+            Motor_Left();
             break;
             
         case CMD_RIGHT:
-            Motor_Right(current_speed);
+            Motor_Right();
             break;
             
         case CMD_STOP:
-            if (accel_enabled)
-                Motor_Stop_Smooth();  // Smooth stop if accel enabled
-            else
-                Motor_Stop();         // Instant stop if accel disabled
-            break;
-        
-        case 'E': // Emergency stop alias from UI
             Motor_Stop();
             break;
-            
-        case CMD_SPEED_SLOW:
-            current_speed = SPEED_SLOW;
-            break;
-            
-        case CMD_SPEED_MEDIUM:
-            current_speed = SPEED_MEDIUM;
-            break;
-            
-        case CMD_SPEED_FAST:
-            current_speed = SPEED_FAST;
-            break;
-            
-        case CMD_ACCEL_ENABLE:
-            accel_enabled = true;
-            break;
-            
-        case CMD_ACCEL_DISABLE:
-        case CMD_ACCEL_DISABLE_ALT: // 'Z' from UI
-            accel_enabled = false;
-            break;
-        
-        case CMD_SELF_TEST: // now 'X'
-        {
-            bool prev_accel = accel_enabled;
-            accel_enabled = false; // instant steps during test
-            /* Simple on-demand test: forward 40/70/100%, then stop */
-            Motor_Forward(40); osDelay(1000);
-            Motor_Forward(70); osDelay(1000);
-            Motor_Forward(100); osDelay(1000);
-            Motor_Stop();
-            accel_enabled = prev_accel;
-            break;
-        }
             
         default:
             // Invalid command - do nothing or stop for safety
@@ -636,13 +469,13 @@ int main(void)
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_TIM4_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
   
   /* Initialize GPIO for motor control and UART */
   GPIO_Init();
-  
-    /* Initialize TIM5 for PWM motor control */
-    TIM5_PWM_Init();
   
   /* Initialize USART1 for command reception */
   USART1_Init();
@@ -678,10 +511,6 @@ int main(void)
   osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
-  /* definition and creation of motorTask */
-  osThreadDef(motorTask, StartMotorTask, osPriorityAboveNormal, 0, 256);
-  motorTaskHandle = osThreadCreate(osThread(motorTask), NULL);
-
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
@@ -696,6 +525,7 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
+
     /* USER CODE BEGIN 3 */
     // Main loop is now managed by FreeRTOS tasks
     osDelay(1000); // Idle loop, should never reach here
@@ -744,6 +574,130 @@ void SystemClock_Config(void)
   }
 }
 
+/**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+
+  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+  */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV2;
+  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc1.Init.ScanConvMode = DISABLE;
+  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.DMAContinuousRequests = DISABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_4;
+  sConfig.Rank = 1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
+  * @brief TIM4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM4_Init(void)
+{
+
+  /* USER CODE BEGIN TIM4_Init 0 */
+
+  /* USER CODE END TIM4_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_IC_InitTypeDef sConfigIC = {0};
+
+  /* USER CODE BEGIN TIM4_Init 1 */
+
+  /* USER CODE END TIM4_Init 1 */
+  htim4.Instance = TIM4;
+  htim4.Init.Prescaler = 83;
+  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim4.Init.Period = 65535;
+  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_IC_Init(&htim4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_BOTHEDGE;
+  sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
+  sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
+  sConfigIC.ICFilter = 0;
+  if (HAL_TIM_IC_ConfigChannel(&htim4, &sConfigIC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_IC_ConfigChannel(&htim4, &sConfigIC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM4_Init 2 */
+
+  /* USER CODE END TIM4_Init 2 */
+
+}
+
+/**
+  * @brief GPIO Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_GPIO_Init(void)
+{
+  /* USER CODE BEGIN MX_GPIO_Init_1 */
+
+  /* USER CODE END MX_GPIO_Init_1 */
+
+  /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  /* USER CODE BEGIN MX_GPIO_Init_2 */
+
+  /* USER CODE END MX_GPIO_Init_2 */
+}
+
 /* USER CODE BEGIN 4 */
 
 /* USER CODE END 4 */
@@ -767,60 +721,6 @@ void StartDefaultTask(void const * argument)
   }
   /* USER CODE END 5 */
 }
-
-/* USER CODE BEGIN 4_EXT */
-/**
-  * @brief  Function implementing the motorTask thread.
-  *         Receives UART bytes from queue and drives motors.
-  */
-void StartMotorTask(void const * argument)
-{
-    static bool self_test_done = false;
-    for(;;)
-  {
-        /* Optional: run a short PWM self-test once at boot to validate outputs */
-        if (!self_test_done && ENABLE_PWM_SELF_TEST)
-        {
-            bool prev_accel = accel_enabled;
-            accel_enabled = false; // make transitions immediate for clear observation
-
-            /* Forward: 40%, 70%, 100% */
-            Motor_Forward(40); osDelay(2000);
-            Motor_Forward(70); osDelay(2000);
-            Motor_Forward(100); osDelay(2000);
-
-            /* Reverse: 40% */
-            Motor_Reverse(40); osDelay(2000);
-
-            /* Left and Right spot turns */
-            Motor_Left(70); osDelay(2000);
-            Motor_Right(70); osDelay(2000);
-
-            Motor_Stop();
-            accel_enabled = prev_accel;
-            self_test_done = true;
-        }
-    /* Wait up to 10ms for a new command */
-    osEvent evt = osMessageGet(uartCmdQueueHandle, 10);
-    if (evt.status == osEventMessage)
-    {
-        uint8_t cmd = (uint8_t)(evt.value.v & 0xFF);
-        Process_Command(cmd);
-        uart_error = false; // Clear error on good cmd
-    }
-
-    /* Periodic safety check */
-    Safety_Check();
-
-    /* If an error was flagged by IRQ, react safely */
-    if (uart_error)
-    {
-        Motor_Stop();
-        uart_error = false;
-    }
-  }
-}
-/* USER CODE END 4_EXT */
 
 /**
   * @brief  Period elapsed callback in non blocking mode

@@ -61,12 +61,32 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN Private defines */
 
-/* Motor Control Pin Definitions - MX1508 Motor Driver */
-#define MOTOR1_IN1_PIN    GPIO_PIN_0   // PA0 - Motor 1 IN1
-#define MOTOR1_IN2_PIN    GPIO_PIN_1   // PA1 - Motor 1 IN2
-#define MOTOR2_IN3_PIN    GPIO_PIN_2   // PA2 - Motor 2 IN3
-#define MOTOR2_IN4_PIN    GPIO_PIN_3   // PA3 - Motor 2 IN4
+/* Motor Control Pin Definitions - MX1508 Motor Driver with PWM */
+#define MOTOR1_IN1_PIN    GPIO_PIN_0   // PA0 - Motor 1 IN1 - TIM3_CH1
+#define MOTOR1_IN2_PIN    GPIO_PIN_1   // PA1 - Motor 1 IN2 - TIM3_CH2
+#define MOTOR2_IN3_PIN    GPIO_PIN_2   // PA2 - Motor 2 IN3 - TIM3_CH3
+#define MOTOR2_IN4_PIN    GPIO_PIN_3   // PA3 - Motor 2 IN4 - TIM3_CH4
 #define MOTOR_PORT        GPIOA
+
+/* PWM Configuration */
+#define PWM_TIMER_FREQ    16000000      // 16 MHz (APB1 timer clock)
+#define PWM_FREQUENCY     1000          // 1 kHz PWM frequency
+#define PWM_PRESCALER     15            // 16MHz / (15+1) = 1MHz timer clock
+#define PWM_PERIOD        999           // 1MHz / (999+1) = 1kHz PWM
+#define PWM_MAX_DUTY      PWM_PERIOD    // 100% duty cycle
+
+/* Motor Speed Levels (0-100%) */
+#define SPEED_STOP        0
+#define SPEED_SLOW        40
+#define SPEED_MEDIUM      70
+#define SPEED_FAST        100
+
+/* Acceleration/Deceleration Configuration */
+#define ACCEL_ENABLED     1             // Set to 0 to disable ramping
+#define ACCEL_STEP        5             // Speed increment per step (0-100%)
+#define ACCEL_DELAY_MS    20            // Delay between steps (milliseconds)
+#define DECEL_STEP        10            // Deceleration step (faster than accel)
+#define DECEL_DELAY_MS    15            // Deceleration delay (shorter for quick stop)
 
 /* LED Indicator Pin Definitions */
 #define LED_RX_PIN        GPIO_PIN_13  // PC13 - RX Activity LED
@@ -76,6 +96,11 @@ void Error_Handler(void);
 /* Heartbeat LED (separate from RX/TX indicators) */
 #define HEARTBEAT_LED_PIN   GPIO_PIN_12   // PB12 - Heartbeat LED
 #define HEARTBEAT_LED_PORT  GPIOB
+
+/* IR Wall Sensors (Analog) - use ADC1 on PA4/PA5 */
+#define IR_LEFT_PIN         GPIO_PIN_4    // PA4 - ADC1_IN4
+#define IR_RIGHT_PIN        GPIO_PIN_5    // PA5 - ADC1_IN5
+#define IR_SENSOR_PORT      GPIOA
 
 /* UART Pin Definitions - USART1 */
 #define UART_TX_PIN       GPIO_PIN_9   // PA9 - USART1_TX
@@ -93,20 +118,39 @@ void Error_Handler(void);
 #define CMD_LEFT          'L'
 #define CMD_RIGHT         'T'
 #define CMD_STOP          'S'
+#define CMD_SPEED_SLOW    '1'   // Set speed to 40%
+#define CMD_SPEED_MEDIUM  '2'   // Set speed to 70%
+#define CMD_SPEED_FAST    '3'   // Set speed to 100%
+#define CMD_ACCEL_ENABLE  'A'   // Enable acceleration/deceleration
+#define CMD_ACCEL_DISABLE 'D'   // Disable acceleration (instant speed change)
+#define CMD_ACCEL_DISABLE_ALT 'Z' // UI alias for instant mode (maps to disable accel)
+/* Self-test command to cycle PWM speeds/directions (manual only) */
+#define CMD_SELF_TEST     'X'
+
+/* Enable a short PWM self-test at boot (runs once inside motor task). Set to 0 to disable. */
+#define ENABLE_PWM_SELF_TEST   0
 
 /* Safety Configuration */
 #define SAFETY_TIMEOUT_MS 2000  // Emergency stop if no command for 2 seconds
 
 /* Function Prototypes */
 void GPIO_Init(void);
+void TIM5_PWM_Init(void);
 void USART1_Init(void);
-void Motor_Forward(void);
-void Motor_Reverse(void);
-void Motor_Left(void);
-void Motor_Right(void);
+void Motor_SetSpeed(uint8_t motor1_in1, uint8_t motor1_in2, uint8_t motor2_in3, uint8_t motor2_in4);
+void Motor_SetSpeed_Smooth(uint8_t target_m1_in1, uint8_t target_m1_in2, uint8_t target_m2_in3, uint8_t target_m2_in4);
+void Motor_Forward(uint8_t speed);
+void Motor_Reverse(uint8_t speed);
+void Motor_Left(uint8_t speed);
+void Motor_Right(uint8_t speed);
 void Motor_Stop(void);
+void Motor_Stop_Smooth(void);
 void Process_Command(uint8_t cmd);
 void Safety_Check(void);
+
+/* IR Sensors API */
+void IR_Init(void);
+void IR_ReadRaw(uint16_t* left, uint16_t* right);
 
 /* USER CODE END Private defines */
 

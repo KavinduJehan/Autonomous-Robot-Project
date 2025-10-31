@@ -2,7 +2,9 @@
 """
 Raspberry Pi 4B Motor Controller Interface
 ==========================================
-Modern asynchronous Python interface for STM32F401RC motor controller.
+Modern asynchronous Python interface for STM32F401RC motor controller
+with PWM speed control support.
+
 Uses asyncio for non-blocking operations and virtual environments.
 
 Requirements:
@@ -21,12 +23,29 @@ Hardware Connections (Raspberry Pi 4B):
     GPIO 17       -> Emergency Stop Button (with pull-up)
     GND           -> STM32 GND (COMMON GROUND!)
 
+Supported Commands:
+    Movement:
+        'F' - Forward at current speed
+        'R' - Reverse at current speed
+        'L' - Turn left (spot turn) at current speed
+        'T' - Turn right (spot turn) at current speed
+        'S' - Stop all motors
+    
+    Speed Control (PWM):
+        '1' - Set speed to SLOW (40%)
+        '2' - Set speed to MEDIUM (70%)
+        '3' - Set speed to FAST (100%)
+    
+    Acceleration Control:
+        'A' - Enable smooth acceleration/deceleration
+        'D' - Disable acceleration (instant speed changes)
+
 Usage:
     python3 rpi_motor_controller.py
     
 Author: Robot Project Team
-Date: October 30, 2025
-Version: 1.0
+Date: October 31, 2025
+Version: 2.1 - Added Acceleration/Deceleration
 """
 
 import asyncio
@@ -53,9 +72,14 @@ class MotorCommand(Enum):
     LEFT = b'L'
     RIGHT = b'T'
     STOP = b'S'
+    SPEED_SLOW = b'1'      # 40% speed
+    SPEED_MEDIUM = b'2'    # 70% speed
+    SPEED_FAST = b'3'      # 100% speed
+    ACCEL_ENABLE = b'A'    # Enable smooth acceleration/deceleration
+    ACCEL_DISABLE = b'D'   # Disable (instant speed changes)
     
     def __str__(self):
-        return self.name.capitalize()
+        return self.name.capitalize().replace('_', ' ')
 
 
 @dataclass
@@ -69,12 +93,28 @@ class ControllerConfig:
     emergency_stop_pin: int = 17  # GPIO pin for emergency stop
 
 
+class SpeedLevel(Enum):
+    """Motor speed levels."""
+    SLOW = (40, MotorCommand.SPEED_SLOW)      # 40% PWM
+    MEDIUM = (70, MotorCommand.SPEED_MEDIUM)  # 70% PWM
+    FAST = (100, MotorCommand.SPEED_FAST)     # 100% PWM
+    
+    def __init__(self, percentage: int, command: MotorCommand):
+        self.percentage = percentage
+        self.command = command
+    
+    def __str__(self):
+        return f"{self.name} ({self.percentage}%)"
+
+
 class MotorController:
     """
     Asynchronous motor controller for STM32 via UART.
     
     Features:
     - Async/await pattern for non-blocking operations
+    - PWM speed control (Slow/Medium/Fast)
+    - Smooth acceleration and deceleration
     - Automatic heartbeat to prevent safety timeout
     - Command queuing and rate limiting
     - Emergency stop button integration
@@ -91,6 +131,8 @@ class MotorController:
         self.running = False
         self.last_command_time = datetime.now()
         self.current_command = MotorCommand.STOP
+        self.current_speed = SpeedLevel.MEDIUM  # Default speed
+        self.accel_enabled = True  # Acceleration/deceleration enabled by default
         self.command_queue = asyncio.Queue()
         self.emergency_stop_active = False
         
@@ -296,6 +338,41 @@ class MotorController:
         await self._send_command(MotorCommand.STOP)
         print("■ Stopped")
     
+    async def set_speed(self, speed: SpeedLevel):
+        """
+        Set motor speed level.
+        
+        Args:
+            speed: SpeedLevel enum (SLOW, MEDIUM, FAST)
+        """
+        await self._send_command(speed.command)
+        self.current_speed = speed
+        print(f"🏃 Speed set to {speed}")
+    
+    async def set_speed_slow(self):
+        """Set speed to SLOW (40%)."""
+        await self.set_speed(SpeedLevel.SLOW)
+    
+    async def set_speed_medium(self):
+        """Set speed to MEDIUM (70%)."""
+        await self.set_speed(SpeedLevel.MEDIUM)
+    
+    async def set_speed_fast(self):
+        """Set speed to FAST (100%)."""
+        await self.set_speed(SpeedLevel.FAST)
+    
+    async def enable_acceleration(self):
+        """Enable smooth acceleration and deceleration."""
+        await self._send_command(MotorCommand.ACCEL_ENABLE)
+        self.accel_enabled = True
+        print("✓ Smooth acceleration/deceleration ENABLED")
+    
+    async def disable_acceleration(self):
+        """Disable acceleration (instant speed changes)."""
+        await self._send_command(MotorCommand.ACCEL_DISABLE)
+        self.accel_enabled = False
+        print("✓ Smooth acceleration/deceleration DISABLED (instant response)")
+    
     async def reset_emergency_stop(self):
         """Reset emergency stop state."""
         self.emergency_stop_active = False
@@ -364,11 +441,20 @@ class InteractiveController:
         print("\n" + "="*60)
         print("🎮 Raspberry Pi Motor Controller - Interactive Mode")
         print("="*60)
+        print("\n📍 Movement Controls:")
         print("  W/↑ - Forward")
         print("  S/↓ - Reverse")
         print("  A/← - Turn Left")
         print("  D/→ - Turn Right")
         print("  SPACE - Stop")
+        print("\n⚡ Speed Controls:")
+        print("  1 - Slow Speed (40%)")
+        print("  2 - Medium Speed (70%)")
+        print("  3 - Fast Speed (100%)")
+        print("\n� Acceleration:")
+        print("  A - Enable Smooth Accel/Decel")
+        print("  Z - Disable Accel (Instant)")
+        print("\n�🛑 Safety & System:")
         print("  E - Emergency Stop")
         print("  R - Reset Emergency Stop")
         print("  I - Info")
@@ -410,6 +496,16 @@ class InteractiveController:
                     await self.motor.turn_right()
                 elif cmd in [' ', 'space', '']:
                     await self.motor.stop()
+                elif cmd == '1':
+                    await self.motor.set_speed_slow()
+                elif cmd == '2':
+                    await self.motor.set_speed_medium()
+                elif cmd == '3':
+                    await self.motor.set_speed_fast()
+                elif cmd == 'a':
+                    await self.motor.enable_acceleration()
+                elif cmd == 'z':
+                    await self.motor.disable_acceleration()
                 elif cmd == 'e':
                     await self.motor.stop()
                     self.motor.emergency_stop_active = True
@@ -439,6 +535,8 @@ class InteractiveController:
         print("📊 Status:")
         print(f"  Connected: {self.motor.connected}")
         print(f"  Current Command: {self.motor.current_command}")
+        print(f"  Current Speed: {self.motor.current_speed}")
+        print(f"  Acceleration: {'Enabled (Smooth)' if self.motor.accel_enabled else 'Disabled (Instant)'}")
         print(f"  Emergency Stop: {self.motor.emergency_stop_active}")
         print(f"  Port: {self.motor.config.port}")
         print(f"  Baud Rate: {self.motor.config.baudrate}")
@@ -447,25 +545,42 @@ class InteractiveController:
 
 async def demo_sequence(motor: MotorController):
     """
-    Run automated demo sequence.
+    Run automated demo sequence with speed variations and acceleration.
     """
-    print("\n🤖 Running Demo Sequence...")
+    print("\n🤖 Running Demo Sequence with PWM Speed Control & Acceleration...")
     print("-"*60)
     
     sequences = [
-        ("Forward", motor.forward, 2.0),
-        ("Stop", motor.stop, 1.0),
-        ("Reverse", motor.reverse, 2.0),
-        ("Stop", motor.stop, 1.0),
-        ("Left Turn", motor.turn_left, 1.5),
-        ("Stop", motor.stop, 1.0),
-        ("Right Turn", motor.turn_right, 1.5),
-        ("Stop", motor.stop, 1.0),
+        ("Enable Smooth Acceleration", motor.enable_acceleration, 0.5),
+        ("Set Medium Speed", motor.set_speed_medium, 0.5),
+        ("Forward (Medium, Smooth)", motor.forward, 3.0),
+        ("Stop (Smooth Decel)", motor.stop, 1.5),
+        
+        ("Set Slow Speed", motor.set_speed_slow, 0.5),
+        ("Reverse (Slow, Smooth)", motor.reverse, 2.0),
+        ("Stop", motor.stop, 1.5),
+        
+        ("Set Fast Speed", motor.set_speed_fast, 0.5),
+        ("Left Turn (Fast, Smooth)", motor.turn_left, 1.5),
+        ("Stop", motor.stop, 1.5),
+        
+        ("Right Turn (Fast, Smooth)", motor.turn_right, 1.5),
+        ("Stop", motor.stop, 1.5),
+        
+        ("Disable Acceleration", motor.disable_acceleration, 0.5),
+        ("Forward Sprint (Fast, Instant)", motor.forward, 2.0),
+        ("Stop (Instant)", motor.stop, 1.0),
+        
+        ("Re-enable Smooth Mode", motor.enable_acceleration, 0.5),
+        ("Set Medium Speed", motor.set_speed_medium, 0.5),
     ]
     
     for name, func, duration in sequences:
         print(f"\n▶ {name} ({duration}s)")
-        await func(duration)
+        if duration > 0:
+            await func(duration) if 'forward' in name.lower() or 'reverse' in name.lower() or 'turn' in name.lower() else await func()
+        else:
+            await func()
         await asyncio.sleep(0.5)
     
     print("\n✓ Demo complete!")
@@ -476,7 +591,7 @@ async def main():
     print("""
     ╔═══════════════════════════════════════════════════════════╗
     ║   Raspberry Pi 4B - STM32 Motor Controller Interface    ║
-    ║                  Version 1.0 - 2025                      ║
+    ║        Version 2.1 - Acceleration Control - 2025         ║
     ╚═══════════════════════════════════════════════════════════╝
     """)
     
@@ -529,16 +644,41 @@ async def main():
             
         elif mode == '3':
             # API mode - example
-            print("\n🔧 API Mode - Running example sequence...")
+            print("\n🔧 API Mode - Running example sequence with speed control & acceleration...")
             
-            # Your custom code here
-            await motor.forward(2)
+            # Example with smooth acceleration/deceleration
+            print("\n1. Enable smooth acceleration")
+            await motor.enable_acceleration()
             await asyncio.sleep(0.5)
-            await motor.turn_right(1)
+            
+            print("\n2. Set medium speed and move forward (watch it ramp up!)")
+            await motor.set_speed_medium()
+            await motor.forward(3)
             await asyncio.sleep(0.5)
-            await motor.forward(2)
-            await asyncio.sleep(0.5)
+            
+            print("\n3. Stop with smooth deceleration")
             await motor.stop()
+            await asyncio.sleep(1.5)
+            
+            print("\n4. Set fast speed and turn right (smooth)")
+            await motor.set_speed_fast()
+            await motor.turn_right(2)
+            await asyncio.sleep(0.5)
+            
+            print("\n5. Disable acceleration for instant response")
+            await motor.disable_acceleration()
+            await asyncio.sleep(0.5)
+            
+            print("\n6. Sprint forward at fast speed (instant)")
+            await motor.forward(2)
+            await asyncio.sleep(0.5)
+            
+            print("\n7. Instant stop")
+            await motor.stop()
+            await asyncio.sleep(0.5)
+            
+            print("\n8. Re-enable smooth mode")
+            await motor.enable_acceleration()
             
             print("\n✓ API sequence complete")
             
