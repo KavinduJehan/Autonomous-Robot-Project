@@ -81,6 +81,11 @@ void Error_Handler(void);
 #define SPEED_MEDIUM      70
 #define SPEED_FAST        100
 
+/* Motor Kick-Start Configuration (helps overcome static friction at low speeds) */
+#define KICKSTART_ENABLED   1             // Enable kick-start pulse for low speeds
+#define KICKSTART_DUTY      80            // Initial boost PWM (%) for kick-start
+#define KICKSTART_DURATION  150           // Kick-start pulse duration (ms)
+
 /* Acceleration/Deceleration Configuration */
 #define ACCEL_ENABLED     1             // Set to 0 to disable ramping
 #define ACCEL_STEP        5             // Speed increment per step (0-100%)
@@ -102,6 +107,29 @@ void Error_Handler(void);
 #define IR_RIGHT_PIN        GPIO_PIN_5    // PA5 - ADC1_IN5
 #define IR_SENSOR_PORT      GPIOA
 
+/* Ultrasonic Sensors (HC-SR04) - Wall Collision Detection */
+// Sensor A faces LEFT wall (while moving forward)
+// Sensor B faces RIGHT wall (while moving forward)
+#define US_TRIG_A_PIN       GPIO_PIN_0    // PB0 - Trigger A
+#define US_TRIG_B_PIN       GPIO_PIN_1    // PB1 - Trigger B
+#define US_ECHO_A_PIN       GPIO_PIN_6    // PB6 - Echo A
+#define US_ECHO_B_PIN       GPIO_PIN_7    // PB7 - Echo B
+#define US_GPIO_PORT        GPIOB
+
+/* Ultrasonic configuration */
+#define ULTRASONIC_ENABLED            1      // Master enable for ultrasonic logic
+#define ULTRASONIC_TRIGGER_US         10     // Trigger pulse width (us)
+#define ULTRASONIC_TIMEOUT_US         30000  // Echo wait timeout (us)
+#define ULTRASONIC_MEASURE_INTERVAL_MS 50    // Measure at 20 Hz
+
+/* Collision avoidance thresholds (cm) */
+#define COLLISION_DISTANCE_STOP       15     // Hard stop if closer than this
+#define COLLISION_DISTANCE_SLOW       30     // Apply steering correction below this
+#define COLLISION_DISTANCE_WARN       50     // Optional warning distance
+
+/* Wall-following steering gain */
+#define WALL_CORR_GAIN_PCT_PER_CM      2     // % speed correction per cm inside threshold
+
 /* UART Pin Definitions - USART1 */
 #define UART_TX_PIN       GPIO_PIN_9   // PA9 - USART1_TX
 #define UART_RX_PIN       GPIO_PIN_10  // PA10 - USART1_RX
@@ -121,9 +149,9 @@ void Error_Handler(void);
 #define CMD_SPEED_SLOW    '1'   // Set speed to 40%
 #define CMD_SPEED_MEDIUM  '2'   // Set speed to 70%
 #define CMD_SPEED_FAST    '3'   // Set speed to 100%
-#define CMD_ACCEL_ENABLE  'A'   // Enable acceleration/deceleration
-#define CMD_ACCEL_DISABLE 'D'   // Disable acceleration (instant speed change)
-#define CMD_ACCEL_DISABLE_ALT 'Z' // UI alias for instant mode (maps to disable accel)
+#define CMD_ACCEL_ENABLE  'M'   // Enable smooth acceleration/deceleration (M for sMooth)
+#define CMD_ACCEL_DISABLE 'Z'   // Disable acceleration (instant speed change)
+#define CMD_ACCEL_DISABLE_ALT 'D' // Alternate disable (was used for this before)
 /* Self-test command to cycle PWM speeds/directions (manual only) */
 #define CMD_SELF_TEST     'X'
 
@@ -151,6 +179,16 @@ void Safety_Check(void);
 /* IR Sensors API */
 void IR_Init(void);
 void IR_ReadRaw(uint16_t* left, uint16_t* right);
+
+/* Ultrasonic Sensor API */
+void Ultrasonic_Init(void);
+uint16_t Ultrasonic_MeasureA(void); // Left-facing sensor (A)
+uint16_t Ultrasonic_MeasureB(void); // Right-facing sensor (B)
+bool Ultrasonic_CheckCollision(void);
+void Ultrasonic_Task(void const * argument);
+
+/* Differential forward drive (arc steering) */
+void Motor_ForwardDifferential(uint8_t left_speed, uint8_t right_speed);
 
 /* USER CODE END Private defines */
 

@@ -37,8 +37,9 @@ Supported Commands:
         '3' - Set speed to FAST (100%)
     
     Acceleration Control:
-        'A' - Enable smooth acceleration/deceleration
-        'D' - Disable acceleration (instant speed changes)
+        'M' - Enable smooth acceleration/deceleration
+        'Z' - Disable acceleration (instant speed changes)
+        'D' - Disable acceleration (alternate)
 
 Usage:
     python3 rpi_motor_controller.py
@@ -75,8 +76,9 @@ class MotorCommand(Enum):
     SPEED_SLOW = b'1'      # 40% speed
     SPEED_MEDIUM = b'2'    # 70% speed
     SPEED_FAST = b'3'      # 100% speed
-    ACCEL_ENABLE = b'A'    # Enable smooth acceleration/deceleration
-    ACCEL_DISABLE = b'D'   # Disable (instant speed changes)
+    ACCEL_ENABLE = b'M'    # Enable smooth acceleration/deceleration
+    ACCEL_DISABLE = b'Z'   # Disable (instant speed changes)
+    ACCEL_DISABLE_ALT = b'D'  # Alternate disable command
     
     def __str__(self):
         return self.name.capitalize().replace('_', ' ')
@@ -451,10 +453,10 @@ class InteractiveController:
         print("  1 - Slow Speed (40%)")
         print("  2 - Medium Speed (70%)")
         print("  3 - Fast Speed (100%)")
-        print("\n� Acceleration:")
-        print("  A - Enable Smooth Accel/Decel")
+        print("\n🚀 Acceleration:")
+        print("  M - Enable Smooth Accel/Decel")
         print("  Z - Disable Accel (Instant)")
-        print("\n�🛑 Safety & System:")
+        print("\n� Safety & System:")
         print("  E - Emergency Stop")
         print("  R - Reset Emergency Stop")
         print("  I - Info")
@@ -502,7 +504,7 @@ class InteractiveController:
                     await self.motor.set_speed_medium()
                 elif cmd == '3':
                     await self.motor.set_speed_fast()
-                elif cmd == 'a':
+                elif cmd == 'm':
                     await self.motor.enable_acceleration()
                 elif cmd == 'z':
                     await self.motor.disable_acceleration()

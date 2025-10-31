@@ -65,8 +65,9 @@
   *   '1' (0x31) - Speed:    Set speed to SLOW (40%)
   *   '2' (0x32) - Speed:    Set speed to MEDIUM (70%)
   *   '3' (0x33) - Speed:    Set speed to FAST (100%)
-  *   'A' (0x41) - Accel:    Enable smooth acceleration/deceleration
-  *   'D' (0x44) - Accel:    Disable smooth ramping (instant response)
+  *   'M' (0x4D) - Accel:    Enable smooth acceleration/deceleration
+  *   'Z' (0x5A) - Accel:    Disable smooth ramping (instant response)
+  *   'D' (0x44) - Accel:    Disable smooth ramping (alternate)
   * 
   * @safety_features
   *   - Emergency timeout: Motors stop if no command for 2 seconds
@@ -109,6 +110,7 @@
 TIM_HandleTypeDef htim5;
 osThreadId defaultTaskHandle;
 osThreadId motorTaskHandle;
+osThreadId ultrasonicTaskHandle;
 osMessageQId uartCmdQueueHandle;
 /* USER CODE BEGIN PV */
 volatile uint8_t rx_data = 0;
@@ -123,12 +125,21 @@ volatile uint8_t current_m1_in1 = 0;
 volatile uint8_t current_m1_in2 = 0;
 volatile uint8_t current_m2_in3 = 0;
 volatile uint8_t current_m2_in4 = 0;
+
+// Track if motors are currently moving (for dynamic speed changes)
+volatile bool motors_moving = false;
+volatile uint8_t last_movement_cmd = CMD_STOP;  // Track last movement command
+#if ULTRASONIC_ENABLED
+volatile uint16_t ultrasonic_left_cm = 0;  // Sensor A (left)
+volatile uint16_t ultrasonic_right_cm = 0; // Sensor B (right)
+#endif
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 void StartDefaultTask(void const * argument);
 void StartMotorTask(void const * argument);
+void StartUltrasonicTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -136,6 +147,95 @@ void StartMotorTask(void const * argument);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+#if ULTRASONIC_ENABLED
+/* DWT-based microsecond timing utilities */
+static inline void DWT_Delay_Init(void)
+{
+    /* Enable TRC */
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    /* Reset the cycle counter */
+    DWT->CYCCNT = 0;
+    /* Enable the cycle counter */
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+}
+
+static inline uint32_t micros(void)
+{
+    return (uint32_t)(DWT->CYCCNT / (SystemCoreClock / 1000000U));
+}
+
+static inline void delay_us(uint32_t us)
+{
+    uint32_t start = DWT->CYCCNT;
+    uint32_t ticks = us * (SystemCoreClock / 1000000U);
+    while ((DWT->CYCCNT - start) < ticks) { __NOP(); }
+}
+
+static uint16_t Ultrasonic_Measure_Pin(GPIO_TypeDef* trig_port, uint16_t trig_pin,
+                                       GPIO_TypeDef* echo_port, uint16_t echo_pin)
+{
+    /* Ensure trigger low */
+    HAL_GPIO_WritePin(trig_port, trig_pin, GPIO_PIN_RESET);
+    delay_us(2);
+
+    /* 10us trigger pulse */
+    HAL_GPIO_WritePin(trig_port, trig_pin, GPIO_PIN_SET);
+    delay_us(ULTRASONIC_TRIGGER_US);
+    HAL_GPIO_WritePin(trig_port, trig_pin, GPIO_PIN_RESET);
+
+    uint32_t timeout_ticks = (ULTRASONIC_TIMEOUT_US * (SystemCoreClock / 1000000U));
+    uint32_t tstart, tend;
+
+    /* Wait for echo rising edge */
+    uint32_t start_wait = DWT->CYCCNT;
+    while (HAL_GPIO_ReadPin(echo_port, echo_pin) == GPIO_PIN_RESET)
+    {
+        if ((DWT->CYCCNT - start_wait) > timeout_ticks) return 0; // timeout
+    }
+    tstart = DWT->CYCCNT;
+
+    /* Wait for echo falling edge */
+    while (HAL_GPIO_ReadPin(echo_port, echo_pin) == GPIO_PIN_SET)
+    {
+        if ((DWT->CYCCNT - tstart) > timeout_ticks) return 0; // timeout
+    }
+    tend = DWT->CYCCNT;
+
+    uint32_t pulse_ticks = (tend - tstart);
+    uint32_t pulse_us = pulse_ticks / (SystemCoreClock / 1000000U);
+
+    /* Convert to centimeters: distance (cm) = pulse_us / 58 */
+    uint32_t dist_cm = pulse_us / 58U;
+    if (dist_cm > 400) dist_cm = 400; // clamp to sensor max
+    return (uint16_t)dist_cm;
+}
+
+/* Public Ultrasonic API implementations */
+void Ultrasonic_Init(void)
+{
+    DWT_Delay_Init();
+    /* Triggers already configured in GPIO_Init; ensure low */
+    HAL_GPIO_WritePin(US_GPIO_PORT, US_TRIG_A_PIN | US_TRIG_B_PIN, GPIO_PIN_RESET);
+}
+
+uint16_t Ultrasonic_MeasureA(void)
+{
+    return Ultrasonic_Measure_Pin(US_GPIO_PORT, US_TRIG_A_PIN, US_GPIO_PORT, US_ECHO_A_PIN);
+}
+
+uint16_t Ultrasonic_MeasureB(void)
+{
+    return Ultrasonic_Measure_Pin(US_GPIO_PORT, US_TRIG_B_PIN, US_GPIO_PORT, US_ECHO_B_PIN);
+}
+
+bool Ultrasonic_CheckCollision(void)
+{
+    uint16_t a = Ultrasonic_MeasureA();
+    uint16_t b = Ultrasonic_MeasureB();
+    return (a > 0 && a <= COLLISION_DISTANCE_STOP) || (b > 0 && b <= COLLISION_DISTANCE_STOP);
+}
+#endif /* ULTRASONIC_ENABLED */
 
 /**
  * @brief  Initialize GPIO pins for motor control
@@ -187,6 +287,23 @@ void GPIO_Init(void)
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
     GPIO_InitStruct.Alternate = UART_AF;
     HAL_GPIO_Init(UART_PORT, &GPIO_InitStruct);
+
+#if ULTRASONIC_ENABLED
+    /* Configure Ultrasonic Trigger pins (PB0, PB1) as Output */
+    GPIO_InitStruct.Pin = US_TRIG_A_PIN | US_TRIG_B_PIN;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init(US_GPIO_PORT, &GPIO_InitStruct);
+    HAL_GPIO_WritePin(US_GPIO_PORT, US_TRIG_A_PIN | US_TRIG_B_PIN, GPIO_PIN_RESET);
+
+    /* Configure Ultrasonic Echo pins (PB6, PB7) as Input with pulldown */
+    GPIO_InitStruct.Pin = US_ECHO_A_PIN | US_ECHO_B_PIN;
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(US_GPIO_PORT, &GPIO_InitStruct);
+#endif
 }
 
 /**
@@ -346,16 +463,35 @@ void Motor_SetSpeed(uint8_t motor1_in1, uint8_t motor1_in2, uint8_t motor2_in3, 
  */
 void Motor_SetSpeed_Smooth(uint8_t target_m1_in1, uint8_t target_m1_in2, uint8_t target_m2_in3, uint8_t target_m2_in4)
 {
+    // Check if motors are currently stopped and target is low speed -> apply kick-start
+    bool currently_stopped = (current_m1_in1 == 0 && current_m1_in2 == 0 && 
+                             current_m2_in3 == 0 && current_m2_in4 == 0);
+    uint8_t target_total = target_m1_in1 + target_m1_in2 + target_m2_in3 + target_m2_in4;
+    bool needs_kickstart = (currently_stopped && target_total > 0 && target_total <= (SPEED_SLOW * 2) && KICKSTART_ENABLED);
+    
+    // Apply kick-start pulse to overcome static friction
+    if (needs_kickstart)
+    {
+        // Brief high-power pulse to break static friction
+        uint8_t kick_m1_in1 = (target_m1_in1 > 0) ? KICKSTART_DUTY : 0;
+        uint8_t kick_m1_in2 = (target_m1_in2 > 0) ? KICKSTART_DUTY : 0;
+        uint8_t kick_m2_in3 = (target_m2_in3 > 0) ? KICKSTART_DUTY : 0;
+        uint8_t kick_m2_in4 = (target_m2_in4 > 0) ? KICKSTART_DUTY : 0;
+        
+        Motor_SetSpeed(kick_m1_in1, kick_m1_in2, kick_m2_in3, kick_m2_in4);
+        osDelay(KICKSTART_DURATION);
+    }
+    
     // If acceleration is disabled, set speed instantly
     if (!accel_enabled)
     {
         Motor_SetSpeed(target_m1_in1, target_m1_in2, target_m2_in3, target_m2_in4);
+        motors_moving = (target_total > 0);
         return;
     }
     
     // Determine if we're accelerating or decelerating
     uint8_t current_total = current_m1_in1 + current_m1_in2 + current_m2_in3 + current_m2_in4;
-    uint8_t target_total = target_m1_in1 + target_m1_in2 + target_m2_in3 + target_m2_in4;
     
     bool is_accelerating = (target_total > current_total);
     uint8_t step = is_accelerating ? ACCEL_STEP : DECEL_STEP;
@@ -395,6 +531,9 @@ void Motor_SetSpeed_Smooth(uint8_t target_m1_in1, uint8_t target_m1_in2, uint8_t
         // Delay for smooth ramping
         osDelay(delay_ms);
     }
+    
+    // Update moving state
+    motors_moving = (target_total > 0);
 }
 
 /**
@@ -438,6 +577,16 @@ void Motor_Right(uint8_t speed)
 }
 
 /**
+ * @brief  Forward with differential wheel speeds (arc steering)
+ * @param  left_speed: Left wheel forward PWM (0-100)
+ * @param  right_speed: Right wheel forward PWM (0-100)
+ */
+void Motor_ForwardDifferential(uint8_t left_speed, uint8_t right_speed)
+{
+    Motor_SetSpeed_Smooth(left_speed, 0, right_speed, 0);
+}
+
+/**
  * @brief  Motor Stop - All motors off (instant stop)
  * @retval None
  */
@@ -466,18 +615,22 @@ void Process_Command(uint8_t cmd)
     {
         case CMD_FORWARD:
             Motor_Forward(current_speed);
+            last_movement_cmd = CMD_FORWARD;
             break;
             
         case CMD_REVERSE:
             Motor_Reverse(current_speed);
+            last_movement_cmd = CMD_REVERSE;
             break;
             
         case CMD_LEFT:
             Motor_Left(current_speed);
+            last_movement_cmd = CMD_LEFT;
             break;
             
         case CMD_RIGHT:
             Motor_Right(current_speed);
+            last_movement_cmd = CMD_RIGHT;
             break;
             
         case CMD_STOP:
@@ -485,22 +638,84 @@ void Process_Command(uint8_t cmd)
                 Motor_Stop_Smooth();  // Smooth stop if accel enabled
             else
                 Motor_Stop();         // Instant stop if accel disabled
+            last_movement_cmd = CMD_STOP;
             break;
         
         case 'E': // Emergency stop alias from UI
             Motor_Stop();
+            last_movement_cmd = CMD_STOP;
             break;
             
         case CMD_SPEED_SLOW:
             current_speed = SPEED_SLOW;
+            // If motors are moving, ramp to new speed smoothly
+            if (motors_moving && last_movement_cmd != CMD_STOP)
+            {
+                // Re-issue last movement command with new speed
+                switch(last_movement_cmd)
+                {
+                    case CMD_FORWARD:
+                        Motor_Forward(current_speed);
+                        break;
+                    case CMD_REVERSE:
+                        Motor_Reverse(current_speed);
+                        break;
+                    case CMD_LEFT:
+                        Motor_Left(current_speed);
+                        break;
+                    case CMD_RIGHT:
+                        Motor_Right(current_speed);
+                        break;
+                }
+            }
             break;
             
         case CMD_SPEED_MEDIUM:
             current_speed = SPEED_MEDIUM;
+            // If motors are moving, ramp to new speed smoothly
+            if (motors_moving && last_movement_cmd != CMD_STOP)
+            {
+                // Re-issue last movement command with new speed
+                switch(last_movement_cmd)
+                {
+                    case CMD_FORWARD:
+                        Motor_Forward(current_speed);
+                        break;
+                    case CMD_REVERSE:
+                        Motor_Reverse(current_speed);
+                        break;
+                    case CMD_LEFT:
+                        Motor_Left(current_speed);
+                        break;
+                    case CMD_RIGHT:
+                        Motor_Right(current_speed);
+                        break;
+                }
+            }
             break;
             
         case CMD_SPEED_FAST:
             current_speed = SPEED_FAST;
+            // If motors are moving, ramp to new speed smoothly
+            if (motors_moving && last_movement_cmd != CMD_STOP)
+            {
+                // Re-issue last movement command with new speed
+                switch(last_movement_cmd)
+                {
+                    case CMD_FORWARD:
+                        Motor_Forward(current_speed);
+                        break;
+                    case CMD_REVERSE:
+                        Motor_Reverse(current_speed);
+                        break;
+                    case CMD_LEFT:
+                        Motor_Left(current_speed);
+                        break;
+                    case CMD_RIGHT:
+                        Motor_Right(current_speed);
+                        break;
+                }
+            }
             break;
             
         case CMD_ACCEL_ENABLE:
@@ -508,7 +723,7 @@ void Process_Command(uint8_t cmd)
             break;
             
         case CMD_ACCEL_DISABLE:
-        case CMD_ACCEL_DISABLE_ALT: // 'Z' from UI
+        case CMD_ACCEL_DISABLE_ALT: // 'Z' and 'D' both disable
             accel_enabled = false;
             break;
         
@@ -528,6 +743,7 @@ void Process_Command(uint8_t cmd)
         default:
             // Invalid command - do nothing or stop for safety
             Motor_Stop();
+            last_movement_cmd = CMD_STOP;
             break;
     }
     
@@ -646,6 +862,11 @@ int main(void)
   
   /* Initialize USART1 for command reception */
   USART1_Init();
+
+#if ULTRASONIC_ENABLED
+    /* Initialize Ultrasonic sensors */
+    Ultrasonic_Init();
+#endif
   
   /* Initialize safety timer */
   last_command_time = HAL_GetTick();
@@ -681,6 +902,12 @@ int main(void)
   /* definition and creation of motorTask */
   osThreadDef(motorTask, StartMotorTask, osPriorityAboveNormal, 0, 256);
   motorTaskHandle = osThreadCreate(osThread(motorTask), NULL);
+
+#if ULTRASONIC_ENABLED
+    /* definition and creation of ultrasonicTask */
+    osThreadDef(ultrasonicTask, StartUltrasonicTask, osPriorityNormal, 0, 256);
+    ultrasonicTaskHandle = osThreadCreate(osThread(ultrasonicTask), NULL);
+#endif
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -821,6 +1048,83 @@ void StartMotorTask(void const * argument)
   }
 }
 /* USER CODE END 4_EXT */
+
+#if ULTRASONIC_ENABLED
+/* USER CODE BEGIN Header_StartUltrasonicTask */
+/**
+    * @brief  Function implementing the ultrasonicTask thread.
+    *         Continuously measures side distances and applies wall avoidance.
+    */
+/* USER CODE END Header_StartUltrasonicTask */
+void StartUltrasonicTask(void const * argument)
+{
+    for(;;)
+    {
+        /* Measure left (A) and right (B) distances */
+        uint16_t left = Ultrasonic_MeasureA();
+        uint16_t right = Ultrasonic_MeasureB();
+        ultrasonic_left_cm = left;
+        ultrasonic_right_cm = right;
+
+        /* Emergency stop if any side is dangerously close */
+        if ((left > 0 && left <= COLLISION_DISTANCE_STOP) ||
+                (right > 0 && right <= COLLISION_DISTANCE_STOP))
+        {
+                Motor_Stop();
+                last_movement_cmd = CMD_STOP;
+                motors_moving = false;
+                osDelay(ULTRASONIC_MEASURE_INTERVAL_MS);
+                continue;
+        }
+
+        /* Apply gentle steering only when moving forward */
+        if (last_movement_cmd == CMD_FORWARD && motors_moving)
+        {
+                int base = (int)current_speed;
+                int left_cmd = base;
+                int right_cmd = base;
+
+                /* If left wall too close, reduce left speed to steer right */
+                if (left > 0 && left < COLLISION_DISTANCE_SLOW)
+                {
+                        int delta_cm = (int)COLLISION_DISTANCE_SLOW - (int)left; // positive inside zone
+                        int corr = delta_cm * WALL_CORR_GAIN_PCT_PER_CM; // % reduction
+                        left_cmd -= corr;
+                }
+
+                /* If right wall too close, reduce right speed to steer left */
+                if (right > 0 && right < COLLISION_DISTANCE_SLOW)
+                {
+                        int delta_cm = (int)COLLISION_DISTANCE_SLOW - (int)right;
+                        int corr = delta_cm * WALL_CORR_GAIN_PCT_PER_CM;
+                        right_cmd -= corr;
+                }
+
+        /* Clamp speeds */
+        if (left_cmd < 0) {
+            left_cmd = 0;
+        }
+        if (left_cmd > 100) {
+            left_cmd = 100;
+        }
+        if (right_cmd < 0) {
+            right_cmd = 0;
+        }
+        if (right_cmd > 100) {
+            right_cmd = 100;
+        }
+
+                /* Only update if any correction applied */
+                if (left_cmd != base || right_cmd != base)
+                {
+                        Motor_ForwardDifferential((uint8_t)left_cmd, (uint8_t)right_cmd);
+                }
+        }
+
+        osDelay(ULTRASONIC_MEASURE_INTERVAL_MS);
+    }
+}
+#endif /* ULTRASONIC_ENABLED */
 
 /**
   * @brief  Period elapsed callback in non blocking mode
