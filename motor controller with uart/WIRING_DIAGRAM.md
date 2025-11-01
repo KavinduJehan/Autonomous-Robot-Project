@@ -162,6 +162,11 @@ Pin Functions:
     │            │     │       │ PA2      ├─────────┼─→ IN3
     │            │     │       │ PA3      ├─────────┼─→ IN4
     │            │     │       │          │         │
+    │            │     │       │ PB0      ├─────────┼─→ US_TRIG_A (Left Sensor)
+    │            │     │       │ PB1      ├─────────┼─→ US_TRIG_B (Right Sensor)
+    │            │     │       │ PB6 ◄────┼─────────┼─→ US_ECHO_A (Left Sensor)
+    │            │     │       │ PB7 ◄────┼─────────┼─→ US_ECHO_B (Right Sensor)
+    │            │     │       │          │         │
     │            │     │       │ 3.3V/5V  ├─────────┼─→ +3.3V Rail
     │            │     │       └──────────┘         │
     │            │     │                            │
@@ -196,6 +201,10 @@ Pin Functions:
 | Motor 1 Reverse | PA1 | IN2 | Orange |
 | Motor 2 Forward | PA2 | IN3 | Green |
 | Motor 2 Reverse | PA3 | IN4 | Blue |
+| **Ultrasonic Trigger A** | **PB0** | **HC-SR04 TRIG** | **Purple** |
+| **Ultrasonic Trigger B** | **PB1** | **HC-SR04 TRIG** | **Brown** |
+| **Ultrasonic Echo A** | **PB6** | **HC-SR04 ECHO** | **Pink** |
+| **Ultrasonic Echo B** | **PB7** | **HC-SR04 ECHO** | **Cyan** |
 | UART TX | PA9 | - | White |
 | UART RX | PA10 | - | Gray |
 | STM32 Ground | GND | GND | Black |
@@ -304,7 +313,64 @@ Optional for UART lines if needed:
 2. Connect Motor B (right) to B+/B- terminals
 3. Verify motor polarity (both should spin same direction on forward)
 
-### Step 6: Power Up Sequence
+### Step 6: Connect Ultrasonic Sensors (HC-SR04)
+
+Note on logic levels: HC-SR04 ECHO outputs 5V. On STM32F401, PB6/PB7 are 5V‑tolerant digital inputs (when not in analog mode), so you CAN connect ECHO directly. For extra protection and improved noise immunity, a simple resistor divider is recommended.
+
+#### Option 1: Direct connection using 5V‑tolerant inputs (OK)
+- Configure PB6/PB7 as digital input with pull‑down (no analog mode)
+- Ensure no internal pull‑ups are enabled
+
+#### Option 2: Voltage divider for 5V sensors (Recommended in noisy setups)
+For each ECHO pin, add voltage divider (any equivalent ratio ~2:1 works):
+```
+HC-SR04 ECHO → [Rtop] → STM32 GPIO
+                                                 ↓
+                                             [Rbot]
+                                                 ↓
+                                                GND
+
+Vout = Vin × Rbot / (Rtop + Rbot)
+Example pairs (≈3.3V from 5V):
+- Rtop 1kΩ  + Rbot 2kΩ   → 3.33V
+- Rtop 4.7k + Rbot 10kΩ  → 3.40V
+- Rtop 10kΩ + Rbot 20kΩ  → 3.33V (lower current)
+```
+
+#### Left Sensor (A) Connections:
+| HC-SR04 Pin | Connection | STM32 Pin | Notes |
+|------------|------------|-----------|-------|
+| VCC | 5V power rail | - | |
+| TRIG | Direct | **PB0** | Output from STM32 |
+| ECHO | Direct (or divider) | **PB6** | PB6 is 5V‑tolerant; divider optional |
+| GND | Common ground | - | |
+
+#### Right Sensor (B) Connections:
+| HC-SR04 Pin | Connection | STM32 Pin | Notes |
+|------------|------------|-----------|-------|
+| VCC | 5V power rail | - | |
+| TRIG | Direct | **PB1** | Output from STM32 |
+| ECHO | Direct (or divider) | **PB7** | PB7 is 5V‑tolerant; divider optional |
+| GND | Common ground | - | |
+
+#### Troubleshooting Ultrasonic Sensors:
+1. **Sensors don't respond (distance = 0)**:
+    - Check 5V power supply (HC-SR04 needs stable 5V)
+    - Verify TRIG connections to PB0/PB1
+    - Check ECHO voltage dividers (must be 3.3V)
+    - Look for debug output: "US A=XXcm B=YYcm" every 500ms
+
+2. **Sensors read max distance (400cm)**:
+    - Object too far (HC-SR04 max ~4m)
+    - ECHO pin not connected/floating
+    - Sensor facing wrong direction
+
+3. **Erratic readings**:
+    - Ground loop (ensure common ground)
+    - Power supply noise (add 100μF cap near sensors)
+    - Interference from motors (keep wires separated)
+
+### Step 7: Power Up Sequence
 1. Connect STM32 power first (USB or regulated supply)
 2. Verify 3.3V on VDD pin
 3. Connect motor power supply

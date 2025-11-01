@@ -1,0 +1,2 @@
+../Core/Src/command_processor.c:35:6:Command_Process	24	static
+../Core/Src/command_processor.c:189:6:Command_SafetyCheck	8	static

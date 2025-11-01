@@ -1,0 +1,6 @@
+../Core/Src/uart_comm.c:34:6:UART_GPIO_Init	32	static
+../Core/Src/uart_comm.c:54:6:UART_Init	16	static
+../Core/Src/uart_comm.c:90:6:UART_IRQHandler	24	static
+../Core/Src/uart_comm.c:147:6:UART_SendString	16	static
+../Core/Src/uart_comm.c:161:6:UART_SendUInt	32	static
+../Core/Src/uart_comm.c:187:6:UART_SendCRLF	4	static

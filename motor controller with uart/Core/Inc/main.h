@@ -98,6 +98,15 @@ void Error_Handler(void);
 #define LED_TX_PIN        GPIO_PIN_14  // PC14 - TX Activity LED
 #define LED_PORT          GPIOC
 
+/* Wall Avoidance Debug LEDs */
+/* PB14 lights when LEFT sensor reports inside slow/stop zone
+  PB15 lights when RIGHT sensor reports inside slow/stop zone */
+#define WALL_LEFT_LED_PIN   GPIO_PIN_14   // PB14 - Left wall debug LED
+#define WALL_RIGHT_LED_PIN  GPIO_PIN_15   // PB15 - Right wall debug LED
+#define WALL_LED_PORT       GPIOB
+/* Set to 1 if your LEDs are wired active-low (LED to Vcc, pin sinks current) */
+#define WALL_LED_ACTIVE_LOW 0
+
 /* Heartbeat LED (separate from RX/TX indicators) */
 #define HEARTBEAT_LED_PIN   GPIO_PIN_12   // PB12 - Heartbeat LED
 #define HEARTBEAT_LED_PORT  GPIOB
@@ -121,14 +130,30 @@ void Error_Handler(void);
 #define ULTRASONIC_TRIGGER_US         10     // Trigger pulse width (us)
 #define ULTRASONIC_TIMEOUT_US         30000  // Echo wait timeout (us)
 #define ULTRASONIC_MEASURE_INTERVAL_MS 50    // Measure at 20 Hz
+/* Debug: print periodic ultrasonic readings + LED states from the task */
+#define ULTRASONIC_DEBUG              1      // Set to 0 to disable UART debug spam
+/* Extra debug: boot banner and UART heartbeat (to verify TX wiring) */
+#define DEBUG_BOOT_BANNER             1
+#define DEBUG_UART_HEARTBEAT          1
 
-/* Collision avoidance thresholds (cm) */
-#define COLLISION_DISTANCE_STOP       15     // Hard stop if closer than this
-#define COLLISION_DISTANCE_SLOW       30     // Apply steering correction below this
+/* Collision avoidance thresholds (cm)
+ * Note: HC-SR04 minimum reliable range is ~2cm. We set STOP at 3cm to avoid
+ * constant e-stops when running very close (~2.5cm) to the walls.
+ */
+#define COLLISION_DISTANCE_STOP       2.5      // Hard stop if closer than this
+#define COLLISION_DISTANCE_SLOW       5     // Apply steering/centering below this
 #define COLLISION_DISTANCE_WARN       50     // Optional warning distance
 
-/* Wall-following steering gain */
+/* Wall-following steering gain (fallback when only one sensor is valid) */
 #define WALL_CORR_GAIN_PCT_PER_CM      2     // % speed correction per cm inside threshold
+
+/* Center-seeking PID control (active only while moving forward) */
+#define CENTERING_PID_ENABLED          1
+#define CENTER_PID_KP                  1.0f   // % per cm
+#define CENTER_PID_KI                  0.00f  // % per (cm*s) (start 0 to avoid windup)
+#define CENTER_PID_KD                  0.20f  // % per (cm/s)
+#define CENTER_DEADBAND_CM             1.0f   // ignore tiny error band to avoid chatter
+#define CENTER_CORR_MAX                40.0f  // max magnitude of correction (%)
 
 /* UART Pin Definitions - USART1 */
 #define UART_TX_PIN       GPIO_PIN_9   // PA9 - USART1_TX
@@ -161,7 +186,9 @@ void Error_Handler(void);
 #define ENABLE_PWM_SELF_TEST   0
 
 /* Safety Configuration */
-#define SAFETY_TIMEOUT_MS 2000  // Emergency stop if no command for 2 seconds
+/* Emergency stop timeout
+ * Note: temporarily relaxed for debugging so motors don't stop while testing sensors. */
+#define SAFETY_TIMEOUT_MS 10000  // Emergency stop if no command for 10 seconds (set back to 2000 after debug)
 
 /* Function Prototypes */
 void GPIO_Init(void);

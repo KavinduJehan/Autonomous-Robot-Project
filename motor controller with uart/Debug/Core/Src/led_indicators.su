@@ -1,0 +1,6 @@
+../Core/Src/led_indicators.c:29:6:LED_Init	40	static
+../Core/Src/led_indicators.c:73:6:LED_Toggle_RX	8	static
+../Core/Src/led_indicators.c:82:6:LED_Toggle_TX	8	static
+../Core/Src/led_indicators.c:91:6:LED_Toggle_Heartbeat	8	static
+../Core/Src/led_indicators.c:102:6:LED_SetWallIndicators	16	static
+../Core/Src/led_indicators.c:116:6:LED_SelfTest	16	static

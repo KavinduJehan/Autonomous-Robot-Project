@@ -1,0 +1,8 @@
+../Core/Src/ultrasonic.c:40:20:DWT_Delay_Init	4	static
+../Core/Src/ultrasonic.c:61:20:delay_us	24	static,ignoring_inline_asm
+../Core/Src/ultrasonic.c:76:17:Ultrasonic_Measure_Pin	56	static
+../Core/Src/ultrasonic.c:123:6:Ultrasonic_GPIO_Init	32	static
+../Core/Src/ultrasonic.c:152:6:Ultrasonic_Init	8	static
+../Core/Src/ultrasonic.c:164:10:Ultrasonic_MeasureA	8	static
+../Core/Src/ultrasonic.c:177:10:Ultrasonic_MeasureB	8	static
+../Core/Src/ultrasonic.c:190:6:Ultrasonic_CheckCollision	16	static

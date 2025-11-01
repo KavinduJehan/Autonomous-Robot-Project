@@ -139,6 +139,11 @@ class MotorController:
         self.command_queue = asyncio.Queue()
         self.emergency_stop_active = False
         
+        # Ultrasonic sensor data
+        self.ultrasonic_left_cm = 0.0
+        self.ultrasonic_right_cm = 0.0
+        self.last_ultrasonic_update = datetime.now()
+        
         # Callbacks
         self.on_connect: Optional[Callable] = None
         self.on_disconnect: Optional[Callable] = None
@@ -264,6 +269,110 @@ class MotorController:
                 self.on_error(e)
             return False
     
+        async def _uart_read_loop(self):
+            """
+            Read UART responses from STM32 (debug output, sensor data).
+            Runs in background as async task.
+            """
+            print("📥 UART reader started (monitoring for debug output)")
+        
+            buffer = ""
+            while self.running and self.connected and self.reader:
+                try:
+                    # Read available data (non-blocking)
+                    data = await asyncio.wait_for(
+                        self.reader.read(100),
+                        timeout=0.5
+                    )
+                
+                    if data:
+                        # Decode and add to buffer
+                        text = data.decode('utf-8', errors='ignore')
+                        buffer += text
+                    
+                        # Process complete lines
+                        while '\n' in buffer:
+                            line, buffer = buffer.split('\n', 1)
+                            line = line.strip()
+                        
+                            if line:
+                                self._process_uart_response(line)
+                
+                except asyncio.TimeoutError:
+                    # No data available, continue
+                    pass
+                except Exception as e:
+                    print(f"⚠️  UART read error: {e}")
+                    await asyncio.sleep(0.5)
+    
+        def _process_uart_response(self, line: str):
+            """
+            Process received UART response from STM32.
+        
+            Expected formats:
+                "US A=XXcm B=YYcm"  - Ultrasonic sensor readings
+                "Wall L=XXcm R=YYcm" - Wall avoidance debug
+                "CMD: X" - Command acknowledgment
+            """
+            try:
+                # Print all received lines for debugging
+                print(f"  📩 STM32: {line}")
+            
+                # Parse ultrasonic sensor data
+                if line.startswith("US ") or line.startswith("Wall "):
+                    # Extract distances: "US A=15cm B=20cm" or "Wall L=15cm R=20cm"
+                    parts = line.split()
+                
+                    for part in parts:
+                        if '=' in part and 'cm' in part:
+                            key, value = part.split('=')
+                            distance_str = value.replace('cm', '').strip()
+                        
+                            try:
+                                distance = float(distance_str)
+                            
+                                # Update sensor values
+                                if key in ['A', 'L']:  # Left sensor
+                                    self.ultrasonic_left_cm = distance
+                                elif key in ['B', 'R']:  # Right sensor
+                                    self.ultrasonic_right_cm = distance
+                            
+                                self.last_ultrasonic_update = datetime.now()
+                            
+                            except ValueError:
+                                pass
+                
+                    # Warn if sensors not responding (distance = 0)
+                    if self.ultrasonic_left_cm == 0 and self.ultrasonic_right_cm == 0:
+                        print("  ⚠️  WARNING: Both ultrasonic sensors reading 0cm (not connected?)")
+                    elif self.ultrasonic_left_cm == 0:
+                        print("  ⚠️  WARNING: Left ultrasonic sensor reading 0cm (check wiring)")
+                    elif self.ultrasonic_right_cm == 0:
+                        print("  ⚠️  WARNING: Right ultrasonic sensor reading 0cm (check wiring)")
+                
+                    # Warn if obstacle detected
+                    if self.ultrasonic_left_cm > 0 and self.ultrasonic_left_cm < 5:
+                        print(f"  🚨 OBSTACLE LEFT: {self.ultrasonic_left_cm}cm!")
+                    if self.ultrasonic_right_cm > 0 and self.ultrasonic_right_cm < 5:
+                        print(f"  🚨 OBSTACLE RIGHT: {self.ultrasonic_right_cm}cm!")
+        
+            except Exception as e:
+                print(f"  ⚠️  Error parsing UART response: {e}")
+    
+        def get_ultrasonic_distances(self) -> tuple[float, float]:
+            """
+            Get current ultrasonic sensor distances.
+        
+            Returns:
+                tuple: (left_cm, right_cm)
+            """
+            age = (datetime.now() - self.last_ultrasonic_update).total_seconds()
+        
+            if age > 2.0:
+                print("⚠️  Ultrasonic data stale (>2s old)")
+        
+            return (self.ultrasonic_left_cm, self.ultrasonic_right_cm)
+    
     async def forward(self, duration: Optional[float] = None):
         """
         Move forward.
@@ -385,7 +494,10 @@ class MotorController:
     async def request_ultrasonic_ping(self):
         """Request ultrasonic distance measurement from STM32."""
         await self._send_command(MotorCommand.ULTRASONIC_PING)
-        print("📡 Ultrasonic ping sent (check UART output for: 'US A=xxcm B=yycm')")
+        print("📡 Ultrasonic ping sent")
+        await asyncio.sleep(0.2)  # Wait for response
+        left, right = self.get_ultrasonic_distances()
+        print(f"   Left: {left:.1f}cm, Right: {right:.1f}cm")
     
     async def _heartbeat_loop(self):
         """
@@ -418,6 +530,7 @@ class MotorController:
         
         # Start heartbeat task
         heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+            uart_reader_task = asyncio.create_task(self._uart_read_loop())
         
         try:
             # Keep running until stopped
@@ -428,6 +541,7 @@ class MotorController:
             pass
         finally:
             heartbeat_task.cancel()
+                uart_reader_task.cancel()
             await self.disconnect()
     
     def cleanup(self):
@@ -550,6 +664,10 @@ class InteractiveController:
         print(f"  Current Speed: {self.motor.current_speed}")
         print(f"  Acceleration: {'Enabled (Smooth)' if self.motor.accel_enabled else 'Disabled (Instant)'}")
         print(f"  Emergency Stop: {self.motor.emergency_stop_active}")
+        print(f"  Ultrasonic Left: {self.motor.ultrasonic_left_cm:.1f}cm")
+        print(f"  Ultrasonic Right: {self.motor.ultrasonic_right_cm:.1f}cm")
+        age = (datetime.now() - self.motor.last_ultrasonic_update).total_seconds()
+        print(f"  Sensor Data Age: {age:.1f}s")
         print(f"  Port: {self.motor.config.port}")
         print(f"  Baud Rate: {self.motor.config.baudrate}")
         print("-"*40)

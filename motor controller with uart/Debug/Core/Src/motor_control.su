@@ -1,0 +1,11 @@
+../Core/Src/motor_control.c:38:6:Motor_GPIO_Init	32	static
+../Core/Src/motor_control.c:58:6:Motor_TIM5_PWM_Init	40	static
+../Core/Src/motor_control.c:123:6:Motor_SetSpeed	32	static
+../Core/Src/motor_control.c:152:6:Motor_SetSpeed_Smooth	40	static
+../Core/Src/motor_control.c:230:6:Motor_Forward	16	static
+../Core/Src/motor_control.c:240:6:Motor_Reverse	16	static
+../Core/Src/motor_control.c:250:6:Motor_Left	16	static
+../Core/Src/motor_control.c:260:6:Motor_Right	16	static
+../Core/Src/motor_control.c:271:6:Motor_ForwardDifferential	16	static
+../Core/Src/motor_control.c:280:6:Motor_Stop	8	static
+../Core/Src/motor_control.c:289:6:Motor_Stop_Smooth	8	static
