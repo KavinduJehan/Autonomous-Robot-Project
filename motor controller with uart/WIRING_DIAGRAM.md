@@ -21,7 +21,7 @@
                     PC3  │11    54 │ PB12
                     VSSA │12    53 │ PB13
                     VDDA │13    52 │ PB14
-              [TX]  PA0  │14    51 │ PB15 [IN4]
+              [TX]  PA0  │14    51 │ PB15
               [RX]  PA1  │15    50 │ PC6
               [RX]  PA2  │16    49 │ PC7
               [RX]  PA3  │17    48 │ PC8
@@ -45,7 +45,7 @@
 KEY PINS:
   PA0  - Motor 1 IN1 (Forward)
   PA1  - Motor 1 IN2 (Reverse)
-  PA2  - Motor 2 IN3 (Forward)
+    PA2  - Motor 2 IN3 (Forward)
   PA3  - Motor 2 IN4 (Reverse)
   PA9  - USART1 TX
   PA10 - USART1 RX
@@ -90,17 +90,17 @@ Pin Functions:
 └──────────────────────────────────────────────────────────────────┘
 
 
-    USB-TTL Adapter              STM32F401RC              MX1508
+    Raspberry Pi 4B              STM32F401RC              MX1508
     ┌──────────┐               ┌────────────┐          ┌─────────┐
     │          │               │            │          │         │
-    │   VCC ●──┼──X            │            │   PA0 ●──┼──● IN1 │
-    │          │  (Optional)   │            │          │         │
-    │          │               │            │   PA1 ●──┼──● IN2 │
-    │   TXD ●──┼───────────────┼──● PA10    │          │         │
-    │          │               │   (RX)     │   PA2 ●──┼──● IN3 │
+    │          │               │            │   PA0 ●──┼──● IN1 │
+    │ GPIO14 ●─┼───────────────┼──● PA10    │          │         │
+    │  (TXD) │ │               │   (RX)     │   PA1 ●──┼──● IN2 │
+    │        │ │               │            │          │         │
+    │        └─┼───────────────┼──● PA9     │   PA2 ●──┼──● IN3 │
+    │ GPIO15 ●─┼───────────────┤   (TX)     │          │         │
+    │  (RXD)   │               │            │   PA3 ●──┼──● IN4 │
     │          │               │            │          │         │
-    │   RXD ●──┼───────────────┼──● PA9     │   PA3 ●──┼──● IN4 │
-    │          │               │   (TX)     │          │         │
     │          │               │            │          │   VCC ●─┼──┐
     │   GND ●──┼───────┬───────┼──● GND     │          │         │  │
     │          │       │       │            │          │   GND ●─┼──┤
@@ -146,14 +146,16 @@ Pin Functions:
                  +    -
                  │    │
     ┌────────────┼────┼─────────────────────────────┐
-    │ USB-TTL    │    │                             │
-    │  Adapter   │    │         STM32F401RC         │
+    │ Raspberry  │    │                             │
+    │ Pi 4B      │    │         STM32F401RC         │
     │ ┌────┐     │    │        ┌──────────┐         │
-    │ │USB │     │    └────────┤ GND      │         │
+    │ │GPIO│     │    └────────┤ GND      │         │
     │ └─┬──┘     │             │          │         │
-    │   │ TXD────┼─────────────┤ PA10(RX) │         │
+    │   │GPIO14──┼─────────────┤ PA10(RX) │         │
+    │   │ (TXD)  │             │          │         │
     │   │        │             │          │         │
-    │   │ RXD────┼─────────────┤ PA9(TX)  │         │
+    │   │GPIO15──┼─────────────┤ PA9(TX)  │         │
+    │   │ (RXD)  │             │          │         │
     │   │        │             │          │         │
     │   │ GND────┼─────┬───────┤ GND      │         │
     │   │        │     │       │          │         │
@@ -205,9 +207,9 @@ Pin Functions:
 | **Ultrasonic Trigger B** | **PB1** | **HC-SR04 TRIG** | **Brown** |
 | **Ultrasonic Echo A** | **PB6** | **HC-SR04 ECHO** | **Pink** |
 | **Ultrasonic Echo B** | **PB7** | **HC-SR04 ECHO** | **Cyan** |
-| UART TX | PA9 | - | White |
-| UART RX | PA10 | - | Gray |
-| STM32 Ground | GND | GND | Black |
+| UART TX | PA9 | RPI GPIO15 (RXD) | White |
+| UART RX | PA10 | RPI GPIO14 (TXD) | Gray |
+| STM32 Ground | GND | RPI GND | Black |
 | Motor Power | - | VCC | Red |
 | Motor Ground | - | GND | Black |
 
@@ -303,10 +305,11 @@ Optional for UART lines if needed:
 3. Connect VCC to motor power supply
 4. Connect control pins (IN1-IN4) to PA0-PA3
 
-### Step 4: Connect UART
-1. Connect USB-TTL adapter TX to PA10
-2. Connect USB-TTL adapter RX to PA9
-3. Connect USB-TTL adapter GND to common ground
+### Step 4: Connect UART (Raspberry Pi 4B)
+1. Connect RPI GPIO14 (TXD) to STM32 PA10 (RX)
+2. Connect RPI GPIO15 (RXD) to STM32 PA9 (TX)
+3. Connect RPI GND to STM32 common ground
+4. **CRITICAL**: Ensure common ground between RPI and STM32
 
 ### Step 5: Connect Motors
 1. Connect Motor A (left) to A+/A- terminals

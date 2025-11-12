@@ -41,22 +41,39 @@ void WallAvoidance_Task(void const * argument)
     /* Debug throttling */
     static uint32_t dbg_counter = 0;
 
+    /* Cache last valid (non-zero) distances to mask occasional dropouts */
+    static uint16_t last_valid_left = 0;
+    static uint16_t last_valid_right = 0;
+    static uint16_t left_zero_count = 0;
+    static uint16_t right_zero_count = 0;
+
 #if DEBUG_BOOT_BANNER
     UART_SendString("Task: ultrasonic started\r\n");
 #endif
 
     for(;;)
     {
-        /* Measure left (A) and right (B) distances */
-        uint16_t left = Ultrasonic_MeasureA();
-        osDelay(5);
-        uint16_t right = Ultrasonic_MeasureB();
-        ultrasonic_left_cm = left;
-        ultrasonic_right_cm = right;
+          /* Measure left (A) and right (B) distances */
+          uint16_t left = Ultrasonic_MeasureA();
+          osDelay(5);
+          uint16_t right = Ultrasonic_MeasureB();
+          ultrasonic_left_cm = left;
+          ultrasonic_right_cm = right;
 
-        /* Drive debug LEDs */
-        GPIO_PinState left_led = (left > 0 && left <= COLLISION_DISTANCE_SLOW) ? GPIO_PIN_SET : GPIO_PIN_RESET;
-        GPIO_PinState right_led = (right > 0 && right <= COLLISION_DISTANCE_SLOW) ? GPIO_PIN_SET : GPIO_PIN_RESET;
+          /* Update last valid values and dropout counters */
+          if (left > 0) { last_valid_left = left; left_zero_count = 0; }
+          else { if (left_zero_count < 1000) left_zero_count++; }
+          if (right > 0) { last_valid_right = right; right_zero_count = 0; }
+          else { if (right_zero_count < 1000) right_zero_count++; }
+
+          /* For safety/steering, use effective distances that tolerate brief zeros
+              Use cached value for up to ~0.5s (10 cycles @ 50ms) */
+          uint16_t left_eff = (left > 0) ? left : ((left_zero_count <= 10) ? last_valid_left : 400);
+          uint16_t right_eff = (right > 0) ? right : ((right_zero_count <= 10) ? last_valid_right : 400);
+
+          /* Drive debug LEDs (show effective state so dropouts are visible as steady) */
+          GPIO_PinState left_led = (left_eff > 0 && left_eff <= COLLISION_DISTANCE_SLOW) ? GPIO_PIN_SET : GPIO_PIN_RESET;
+          GPIO_PinState right_led = (right_eff > 0 && right_eff <= COLLISION_DISTANCE_SLOW) ? GPIO_PIN_SET : GPIO_PIN_RESET;
         LED_SetWallIndicators(left_led, right_led);
 
 #if ULTRASONIC_DEBUG
@@ -79,8 +96,8 @@ void WallAvoidance_Task(void const * argument)
 #endif
 
         /* Emergency stop if any side is dangerously close */
-        if ((left > 0 && left <= COLLISION_DISTANCE_STOP) ||
-            (right > 0 && right <= COLLISION_DISTANCE_STOP))
+        if ((left_eff > 0 && left_eff <= COLLISION_DISTANCE_STOP) ||
+            (right_eff > 0 && right_eff <= COLLISION_DISTANCE_STOP))
         {
             Motor_Stop();
             last_movement_cmd = CMD_STOP;
@@ -99,13 +116,13 @@ void WallAvoidance_Task(void const * argument)
             int right_cmd = base;
 
 #if CENTERING_PID_ENABLED
-            bool left_ok = (left > 0);
-            bool right_ok = (right > 0);
+            bool left_ok = (left_eff > 0);
+            bool right_ok = (right_eff > 0);
 
             if (left_ok && right_ok)
             {
                 /* error positive => closer to left => steer right */
-                float err = (float)left - (float)right;
+                float err = (float)left_eff - (float)right_eff;
 
                 /* deadband to avoid dithering */
                 if (err > -CENTER_DEADBAND_CM && err < CENTER_DEADBAND_CM)
@@ -143,16 +160,16 @@ void WallAvoidance_Task(void const * argument)
 #endif /* CENTERING_PID_ENABLED */
             {
                 /* Fallback: single-sensor proportional nudge away */
-                if (left > 0 && left < COLLISION_DISTANCE_SLOW)
+                if (left_eff > 0 && left_eff < COLLISION_DISTANCE_SLOW)
                 {
-                    int delta_cm = (int)COLLISION_DISTANCE_SLOW - (int)left;
+                    int delta_cm = (int)COLLISION_DISTANCE_SLOW - (int)left_eff;
                     int corr = delta_cm * WALL_CORR_GAIN_PCT_PER_CM;
                     left_cmd -= corr;
                 }
 
-                if (right > 0 && right < COLLISION_DISTANCE_SLOW)
+                if (right_eff > 0 && right_eff < COLLISION_DISTANCE_SLOW)
                 {
-                    int delta_cm = (int)COLLISION_DISTANCE_SLOW - (int)right;
+                    int delta_cm = (int)COLLISION_DISTANCE_SLOW - (int)right_eff;
                     int corr = delta_cm * WALL_CORR_GAIN_PCT_PER_CM;
                     right_cmd -= corr;
                 }

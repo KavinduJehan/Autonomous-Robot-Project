@@ -158,6 +158,8 @@ void Command_Process(uint8_t cmd)
 
         case CMD_ULTRASONIC_PING:
         {
+            /* Immediate ACK so host can verify TX path without waiting */
+            UART_SendString("ACK U\r\n");
 #if ULTRASONIC_ENABLED
             uint16_t a = Ultrasonic_MeasureA();
             osDelay(5);
