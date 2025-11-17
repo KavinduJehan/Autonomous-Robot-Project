@@ -11,6 +11,7 @@
 #include "motor_control.h"
 #include "ultrasonic.h"
 #include "uart_comm.h"
+#include "tof_sensors.h"
 #include "main.h"
 #include "cmsis_os.h"
 
@@ -164,14 +165,73 @@ void Command_Process(uint8_t cmd)
             uint16_t a = Ultrasonic_MeasureA();
             osDelay(5);
             uint16_t b = Ultrasonic_MeasureB();
-            UART_SendString("US A="); 
+            osDelay(5);
+            uint16_t c = Ultrasonic_MeasureC();
+            UART_SendString("US L="); 
             UART_SendUInt(a); 
-            UART_SendString("cm B="); 
+            UART_SendString("cm R="); 
             UART_SendUInt(b); 
+            UART_SendString("cm F="); 
+            UART_SendUInt(c); 
             UART_SendCRLF();
 #else
             UART_SendString("US disabled\r\n");
 #endif
+            break;
+        }
+
+        case CMD_FRONT_DISTANCE:
+        {
+#if ULTRASONIC_ENABLED
+            uint16_t front = Ultrasonic_MeasureC();
+            UART_SendString("FD=");
+            UART_SendUInt(front);
+            UART_SendCRLF();
+#else
+            UART_SendString("FD=0\r\n");
+#endif
+            break;
+        }
+
+        case CMD_STATUS_REPORT:
+        {
+#if ULTRASONIC_ENABLED
+            uint16_t left = Ultrasonic_MeasureA();
+            osDelay(5);
+            uint16_t right = Ultrasonic_MeasureB();
+            osDelay(5);
+            uint16_t front = Ultrasonic_MeasureC();
+            
+            UART_SendString("STATUS L=");
+            UART_SendUInt(left);
+            UART_SendString(" R=");
+            UART_SendUInt(right);
+            UART_SendString(" F=");
+            UART_SendUInt(front);
+            UART_SendString(" SPD=");
+            UART_SendUInt(current_speed);
+            UART_SendString(" MOV=");
+            if (motors_moving) {
+                UART_SendString("Y");
+            } else {
+                UART_SendString("N");
+            }
+            UART_SendCRLF();
+#else
+            UART_SendString("STATUS SENSORS=OFF\r\n");
+#endif
+            break;
+        }
+
+        case CMD_TOF_DISTANCES:
+        case CMD_TOF_JUNCTIONS:
+        case CMD_TOF_OBSTACLES:
+        case 'X':  // ToF hardware test
+        case 'Y':  // Toggle slow I2C mode
+        case 'N':  // Reinitialize ToF sensors
+        {
+            /* Delegate ToF commands to ToF module */
+            ToF_ProcessCommand(cmd);
             break;
         }
             

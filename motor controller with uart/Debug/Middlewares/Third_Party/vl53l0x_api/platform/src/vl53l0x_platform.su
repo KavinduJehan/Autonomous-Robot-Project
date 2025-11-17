@@ -1,0 +1,13 @@
+../Middlewares/Third_Party/vl53l0x_api/platform/src/vl53l0x_platform.c:14:22:ToF_MapHalStatus	16	static
+../Middlewares/Third_Party/vl53l0x_api/platform/src/vl53l0x_platform.c:19:15:VL53L0X_LockSequenceAccess	16	static
+../Middlewares/Third_Party/vl53l0x_api/platform/src/vl53l0x_platform.c:25:15:VL53L0X_UnlockSequenceAccess	16	static
+../Middlewares/Third_Party/vl53l0x_api/platform/src/vl53l0x_platform.c:31:15:VL53L0X_WriteMulti	24	static
+../Middlewares/Third_Party/vl53l0x_api/platform/src/vl53l0x_platform.c:39:15:VL53L0X_ReadMulti	24	static
+../Middlewares/Third_Party/vl53l0x_api/platform/src/vl53l0x_platform.c:47:15:VL53L0X_WrByte	16	static
+../Middlewares/Third_Party/vl53l0x_api/platform/src/vl53l0x_platform.c:52:15:VL53L0X_WrWord	24	static
+../Middlewares/Third_Party/vl53l0x_api/platform/src/vl53l0x_platform.c:61:15:VL53L0X_WrDWord	32	static
+../Middlewares/Third_Party/vl53l0x_api/platform/src/vl53l0x_platform.c:72:15:VL53L0X_UpdateByte	24	static
+../Middlewares/Third_Party/vl53l0x_api/platform/src/vl53l0x_platform.c:84:15:VL53L0X_RdByte	24	static
+../Middlewares/Third_Party/vl53l0x_api/platform/src/vl53l0x_platform.c:89:15:VL53L0X_RdWord	32	static
+../Middlewares/Third_Party/vl53l0x_api/platform/src/vl53l0x_platform.c:99:15:VL53L0X_RdDWord	32	static
+../Middlewares/Third_Party/vl53l0x_api/platform/src/vl53l0x_platform.c:112:15:VL53L0X_PollingDelay	16	static

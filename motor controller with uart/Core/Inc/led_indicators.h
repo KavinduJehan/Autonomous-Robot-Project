@@ -1,8 +1,8 @@
 /**
   ******************************************************************************
   * @file           : led_indicators.h
-  * @brief          : LED indicators module header
-  * @description    : Control for RX/TX, heartbeat, and wall detection LEDs
+ * @brief          : LED indicators module header
+ * @description    : Control for RX/TX and heartbeat LEDs
   ******************************************************************************
   */
 
@@ -48,14 +48,6 @@ void LED_Toggle_TX(void);
  * @retval None
  */
 void LED_Toggle_Heartbeat(void);
-
-/**
- * @brief  Set wall detection LED states
- * @param  left_state: GPIO_PIN_SET or GPIO_PIN_RESET
- * @param  right_state: GPIO_PIN_SET or GPIO_PIN_RESET
- * @retval None
- */
-void LED_SetWallIndicators(GPIO_PinState left_state, GPIO_PinState right_state);
 
 /**
  * @brief  Run LED self-test (brief blink sequence)

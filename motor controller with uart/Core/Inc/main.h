@@ -98,31 +98,20 @@ void Error_Handler(void);
 #define LED_TX_PIN        GPIO_PIN_14  // PC14 - TX Activity LED
 #define LED_PORT          GPIOC
 
-/* Wall Avoidance Debug LEDs */
-/* PB14 lights when LEFT sensor reports inside slow/stop zone
-  PB15 lights when RIGHT sensor reports inside slow/stop zone */
-#define WALL_LEFT_LED_PIN   GPIO_PIN_14   // PB14 - Left wall debug LED
-#define WALL_RIGHT_LED_PIN  GPIO_PIN_15   // PB15 - Right wall debug LED
-#define WALL_LED_PORT       GPIOB
-/* Set to 1 if your LEDs are wired active-low (LED to Vcc, pin sinks current) */
-#define WALL_LED_ACTIVE_LOW 0
-
 /* Heartbeat LED (separate from RX/TX indicators) */
 #define HEARTBEAT_LED_PIN   GPIO_PIN_12   // PB12 - Heartbeat LED
 #define HEARTBEAT_LED_PORT  GPIOB
 
-/* IR Wall Sensors (Analog) - use ADC1 on PA4/PA5 */
-#define IR_LEFT_PIN         GPIO_PIN_4    // PA4 - ADC1_IN4
-#define IR_RIGHT_PIN        GPIO_PIN_5    // PA5 - ADC1_IN5
-#define IR_SENSOR_PORT      GPIOA
-
-/* Ultrasonic Sensors (HC-SR04) - Wall Collision Detection */
+/* Ultrasonic Sensors (HC-SR04) - Collision Detection */
 // Sensor A faces LEFT wall (while moving forward)
-// Sensor B faces RIGHT wall (while moving forward)
-#define US_TRIG_A_PIN       GPIO_PIN_0    // PB0 - Trigger A
-#define US_TRIG_B_PIN       GPIO_PIN_1    // PB1 - Trigger B
-#define US_ECHO_A_PIN       GPIO_PIN_6    // PB6 - Echo A
-#define US_ECHO_B_PIN       GPIO_PIN_7    // PB7 - Echo B
+// Sensor B faces RIGHT wall (while moving forward)  
+// Sensor C faces FRONT (obstacle detection for YOLO integration)
+#define US_TRIG_A_PIN       GPIO_PIN_0    // PB0 - Trigger A (Left)
+#define US_TRIG_B_PIN       GPIO_PIN_1    // PB1 - Trigger B (Right)
+#define US_TRIG_C_PIN       GPIO_PIN_2    // PB2 - Trigger C (Front)
+#define US_ECHO_A_PIN       GPIO_PIN_6    // PB6 - Echo A (Left)
+#define US_ECHO_B_PIN       GPIO_PIN_7    // PB7 - Echo B (Right)
+#define US_ECHO_C_PIN       GPIO_PIN_8    // PB8 - Echo C (Front)
 #define US_GPIO_PORT        GPIOB
 
 /* Ultrasonic configuration */
@@ -141,8 +130,13 @@ void Error_Handler(void);
  * constant e-stops when running very close (~2.5cm) to the walls.
  */
 #define COLLISION_DISTANCE_STOP       2.5      // Hard stop if closer than this
-#define COLLISION_DISTANCE_SLOW       5     // Apply steering/centering below this
-#define COLLISION_DISTANCE_WARN       50     // Optional warning distance
+#define COLLISION_DISTANCE_SLOW       5       // Apply steering/centering below this
+#define COLLISION_DISTANCE_WARN       50      // Optional warning distance
+
+/* Front obstacle detection thresholds (for YOLO integration) */
+#define FRONT_OBSTACLE_STOP           15      // Stop if front obstacle closer than 15cm
+#define FRONT_OBSTACLE_SLOW           30      // Reduce speed if obstacle closer than 30cm
+#define FRONT_OBSTACLE_WARN           50      // Report to RPI if obstacle closer than 50cm
 
 /* Wall-following steering gain (fallback when only one sensor is valid) */
 #define WALL_CORR_GAIN_PCT_PER_CM      2     // % speed correction per cm inside threshold
@@ -178,9 +172,17 @@ void Error_Handler(void);
 #define CMD_ACCEL_DISABLE 'Z'   // Disable acceleration (instant speed change)
 #define CMD_ACCEL_DISABLE_ALT 'D' // Alternate disable (was used for this before)
 /* Self-test command to cycle PWM speeds/directions (manual only) */
-#define CMD_SELF_TEST     'X'
+#define CMD_SELF_TEST     'W'
 /* Ultrasonic debug command */
 #define CMD_ULTRASONIC_PING 'U'
+/* Front sensor query command (for RPI integration) */
+#define CMD_FRONT_DISTANCE  'Q'
+/* Status report command (sends all sensor distances) */
+#define CMD_STATUS_REPORT   'I'
+/* ToF sensor commands */
+#define CMD_TOF_DISTANCES   'G'   // Get ToF sensor distances (changed from T to avoid conflict)
+#define CMD_TOF_JUNCTIONS   'J'   // Get junction detection status
+#define CMD_TOF_OBSTACLES   'O'   // Get obstacle detection status
 
 /* Enable a short PWM self-test at boot (runs once inside motor task). Set to 0 to disable. */
 #define ENABLE_PWM_SELF_TEST   0
@@ -205,14 +207,11 @@ void Motor_Stop_Smooth(void);
 void Process_Command(uint8_t cmd);
 void Safety_Check(void);
 
-/* IR Sensors API */
-void IR_Init(void);
-void IR_ReadRaw(uint16_t* left, uint16_t* right);
-
 /* Ultrasonic Sensor API */
 void Ultrasonic_Init(void);
 uint16_t Ultrasonic_MeasureA(void); // Left-facing sensor (A)
 uint16_t Ultrasonic_MeasureB(void); // Right-facing sensor (B)
+uint16_t Ultrasonic_MeasureC(void); // Front-facing sensor (C)
 bool Ultrasonic_CheckCollision(void);
 void Ultrasonic_Task(void const * argument);
 

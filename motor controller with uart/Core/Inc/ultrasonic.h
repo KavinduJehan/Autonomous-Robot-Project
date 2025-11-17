@@ -26,6 +26,7 @@ extern "C" {
 /* Exported variables --------------------------------------------------------*/
 extern volatile uint16_t ultrasonic_left_cm;
 extern volatile uint16_t ultrasonic_right_cm;
+extern volatile uint16_t ultrasonic_front_cm;
 
 /* Exported functions prototypes ---------------------------------------------*/
 
@@ -52,6 +53,12 @@ uint16_t Ultrasonic_MeasureA(void);
  * @retval Distance in centimeters (0-400), 0 on timeout
  */
 uint16_t Ultrasonic_MeasureB(void);
+
+/**
+ * @brief  Measure distance from front sensor (Sensor C)
+ * @retval Distance in centimeters (0-400), 0 on timeout
+ */
+uint16_t Ultrasonic_MeasureC(void);
 
 /**
  * @brief  Check if either sensor detects collision threshold

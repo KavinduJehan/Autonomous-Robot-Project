@@ -72,9 +72,10 @@ void WallAvoidance_Task(void const * argument)
           uint16_t right_eff = (right > 0) ? right : ((right_zero_count <= 10) ? last_valid_right : 400);
 
           /* Drive debug LEDs (show effective state so dropouts are visible as steady) */
-          GPIO_PinState left_led = (left_eff > 0 && left_eff <= COLLISION_DISTANCE_SLOW) ? GPIO_PIN_SET : GPIO_PIN_RESET;
-          GPIO_PinState right_led = (right_eff > 0 && right_eff <= COLLISION_DISTANCE_SLOW) ? GPIO_PIN_SET : GPIO_PIN_RESET;
-        LED_SetWallIndicators(left_led, right_led);
+          // Note: Wall debug LEDs removed - sensor status now available via UART
+          // GPIO_PinState left_led = (left_eff > 0 && left_eff <= COLLISION_DISTANCE_SLOW) ? GPIO_PIN_SET : GPIO_PIN_RESET;
+          // GPIO_PinState right_led = (right_eff > 0 && right_eff <= COLLISION_DISTANCE_SLOW) ? GPIO_PIN_SET : GPIO_PIN_RESET;
+          // LED_SetWallIndicators(left_led, right_led);
 
 #if ULTRASONIC_DEBUG
         /* Every ~10 cycles (~500ms), print diagnostics */
@@ -84,11 +85,8 @@ void WallAvoidance_Task(void const * argument)
             UART_SendUInt(left);
             UART_SendString("cm R="); 
             UART_SendUInt(right);
-            UART_SendString("cm LEDL="); 
-            UART_SendUInt((uint32_t)(left_led == GPIO_PIN_SET));
-            UART_SendString(" LEDR="); 
-            UART_SendUInt((uint32_t)(right_led == GPIO_PIN_SET));
-            UART_SendString(" CMD=");
+            UART_SendString("cm Status=OK"); 
+            UART_SendCRLF();
             while (!(USART1->SR & USART_SR_TXE)) { }
             USART1->DR = (uint8_t)last_movement_cmd;
             UART_SendCRLF();

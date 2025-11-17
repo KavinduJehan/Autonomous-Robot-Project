@@ -55,6 +55,7 @@
 #include "ultrasonic.h"
 #include "command_processor.h"
 #include "wall_avoidance.h"
+#include "tof_sensors.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -76,6 +77,7 @@
 osThreadId defaultTaskHandle;
 osThreadId motorTaskHandle;
 osThreadId ultrasonicTaskHandle;
+osThreadId tofTaskHandle;
 
 /* USER CODE BEGIN PV */
 
@@ -166,13 +168,16 @@ int main(void)
     UART_SendString("OFF\r\n");
 #endif
     UART_SendString("Modules: motor_control, uart_comm, led_indicators, ");
-    UART_SendString("ultrasonic, command_processor, wall_avoidance\r\n");
+    UART_SendString("ultrasonic, tof_sensors, command_processor, wall_avoidance\r\n");
 #endif
 
 #if ULTRASONIC_ENABLED
     /* Initialize Ultrasonic sensors */
     Ultrasonic_Init();
 #endif
+    
+    /* Initialize ToF sensors */
+    ToF_Init();
     
     /* Run LED self-test */
     LED_SelfTest();
@@ -217,6 +222,10 @@ int main(void)
     osThreadDef(ultrasonicTask, WallAvoidance_Task, osPriorityNormal, 0, 256);
     ultrasonicTaskHandle = osThreadCreate(osThread(ultrasonicTask), NULL);
 #endif
+
+    /* definition and creation of tofTask */
+    osThreadDef(tofTask, ToF_Task, osPriorityNormal, 0, 1024);  // Increased from 512 to 1024 bytes
+    tofTaskHandle = osThreadCreate(osThread(tofTask), NULL);
 
     /* USER CODE BEGIN RTOS_THREADS */
     /* add threads, ... */

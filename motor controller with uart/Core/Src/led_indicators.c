@@ -1,8 +1,8 @@
 /**
   ******************************************************************************
   * @file           : led_indicators.c
-  * @brief          : LED indicators module implementation
-  * @description    : Control for RX/TX, heartbeat, and wall detection LEDs
+ * @brief          : LED indicators module implementation
+ * @description    : Control for RX/TX and heartbeat LEDs
   ******************************************************************************
   */
 
@@ -54,16 +54,6 @@ void LED_Init(void)
 
     /* Initialize Heartbeat LED to OFF */
     HAL_GPIO_WritePin(HEARTBEAT_LED_PORT, HEARTBEAT_LED_PIN, GPIO_PIN_RESET);
-    
-    /* Configure Wall Debug LEDs (PB14, PB15) as Output */
-    GPIO_InitStruct.Pin = WALL_LEFT_LED_PIN | WALL_RIGHT_LED_PIN;
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(WALL_LED_PORT, &GPIO_InitStruct);
-
-    /* Initialize Wall Debug LEDs to OFF */
-    HAL_GPIO_WritePin(WALL_LED_PORT, WALL_LEFT_LED_PIN | WALL_RIGHT_LED_PIN, GPIO_PIN_RESET);
 }
 
 /**
@@ -94,34 +84,18 @@ void LED_Toggle_Heartbeat(void)
 }
 
 /**
- * @brief  Set wall detection LED states
- * @param  left_state: GPIO_PIN_SET or GPIO_PIN_RESET
- * @param  right_state: GPIO_PIN_SET or GPIO_PIN_RESET
- * @retval None
- */
-void LED_SetWallIndicators(GPIO_PinState left_state, GPIO_PinState right_state)
-{
-#if WALL_LED_ACTIVE_LOW
-    left_state = (left_state == GPIO_PIN_SET) ? GPIO_PIN_RESET : GPIO_PIN_SET;
-    right_state = (right_state == GPIO_PIN_SET) ? GPIO_PIN_RESET : GPIO_PIN_SET;
-#endif
-    HAL_GPIO_WritePin(WALL_LED_PORT, WALL_LEFT_LED_PIN, left_state);
-    HAL_GPIO_WritePin(WALL_LED_PORT, WALL_RIGHT_LED_PIN, right_state);
-}
-
-/**
  * @brief  Run LED self-test (brief blink sequence)
  * @retval None
  */
 void LED_SelfTest(void)
 {
-    GPIO_PinState on_state = GPIO_PIN_SET;
-    GPIO_PinState off_state = GPIO_PIN_RESET;
-#if WALL_LED_ACTIVE_LOW
-    on_state = GPIO_PIN_RESET;
-    off_state = GPIO_PIN_SET;
-#endif
-    HAL_GPIO_WritePin(WALL_LED_PORT, WALL_LEFT_LED_PIN | WALL_RIGHT_LED_PIN, on_state);
+    /* Test RX/TX LEDs */
+    HAL_GPIO_WritePin(LED_PORT, LED_RX_PIN | LED_TX_PIN, GPIO_PIN_SET);
     HAL_Delay(150);
-    HAL_GPIO_WritePin(WALL_LED_PORT, WALL_LEFT_LED_PIN | WALL_RIGHT_LED_PIN, off_state);
+    HAL_GPIO_WritePin(LED_PORT, LED_RX_PIN | LED_TX_PIN, GPIO_PIN_RESET);
+    
+    /* Test Heartbeat LED */
+    HAL_GPIO_WritePin(HEARTBEAT_LED_PORT, HEARTBEAT_LED_PIN, GPIO_PIN_SET);
+    HAL_Delay(150);
+    HAL_GPIO_WritePin(HEARTBEAT_LED_PORT, HEARTBEAT_LED_PIN, GPIO_PIN_RESET);
 }

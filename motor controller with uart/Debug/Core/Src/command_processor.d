@@ -45,7 +45,8 @@ Core/Src/command_processor.o: ../Core/Src/command_processor.c \
  ../Middlewares/Third_Party/FreeRTOS/Source/include/queue.h \
  ../Middlewares/Third_Party/FreeRTOS/Source/include/event_groups.h \
  ../Middlewares/Third_Party/FreeRTOS/Source/include/timers.h \
- ../Core/Inc/ultrasonic.h ../Core/Inc/uart_comm.h ../Core/Inc/main.h
+ ../Core/Inc/ultrasonic.h ../Core/Inc/uart_comm.h \
+ ../Core/Inc/tof_sensors.h ../Core/Inc/main.h
 ../Core/Inc/command_processor.h:
 ../Core/Inc/main.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h:
@@ -95,4 +96,5 @@ Core/Src/command_processor.o: ../Core/Src/command_processor.c \
 ../Middlewares/Third_Party/FreeRTOS/Source/include/timers.h:
 ../Core/Inc/ultrasonic.h:
 ../Core/Inc/uart_comm.h:
+../Core/Inc/tof_sensors.h:
 ../Core/Inc/main.h:

@@ -19,6 +19,7 @@
 /* Private variables ---------------------------------------------------------*/
 volatile uint16_t ultrasonic_left_cm = 0;
 volatile uint16_t ultrasonic_right_cm = 0;
+volatile uint16_t ultrasonic_front_cm = 0;
 
 /* Private function prototypes -----------------------------------------------*/
 #if ULTRASONIC_ENABLED
@@ -128,16 +129,16 @@ void Ultrasonic_GPIO_Init(void)
     /* Enable GPIOB clock */
     __HAL_RCC_GPIOB_CLK_ENABLE();
 
-    /* Configure Ultrasonic Trigger pins (PB0, PB1) as Output */
-    GPIO_InitStruct.Pin = US_TRIG_A_PIN | US_TRIG_B_PIN;
+    /* Configure Ultrasonic Trigger pins (PB0, PB1, PB2) as Output */
+    GPIO_InitStruct.Pin = US_TRIG_A_PIN | US_TRIG_B_PIN | US_TRIG_C_PIN;
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
     HAL_GPIO_Init(US_GPIO_PORT, &GPIO_InitStruct);
-    HAL_GPIO_WritePin(US_GPIO_PORT, US_TRIG_A_PIN | US_TRIG_B_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(US_GPIO_PORT, US_TRIG_A_PIN | US_TRIG_B_PIN | US_TRIG_C_PIN, GPIO_PIN_RESET);
 
-    /* Configure Ultrasonic Echo pins (PB6, PB7) as Input with pulldown */
-    GPIO_InitStruct.Pin = US_ECHO_A_PIN | US_ECHO_B_PIN;
+    /* Configure Ultrasonic Echo pins (PB6, PB7, PB8) as Input with pulldown */
+    GPIO_InitStruct.Pin = US_ECHO_A_PIN | US_ECHO_B_PIN | US_ECHO_C_PIN;
     GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
     GPIO_InitStruct.Pull = GPIO_PULLDOWN;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -153,7 +154,7 @@ void Ultrasonic_Init(void)
 {
 #if ULTRASONIC_ENABLED
     DWT_Delay_Init();
-    HAL_GPIO_WritePin(US_GPIO_PORT, US_TRIG_A_PIN | US_TRIG_B_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(US_GPIO_PORT, US_TRIG_A_PIN | US_TRIG_B_PIN | US_TRIG_C_PIN, GPIO_PIN_RESET);
 #endif
 }
 
@@ -184,15 +185,37 @@ uint16_t Ultrasonic_MeasureB(void)
 }
 
 /**
- * @brief  Check if either sensor detects collision threshold
+ * @brief  Measure distance from front sensor (Sensor C)
+ * @retval Distance in centimeters (0-400), 0 on timeout
+ */
+uint16_t Ultrasonic_MeasureC(void)
+{
+#if ULTRASONIC_ENABLED
+    return Ultrasonic_Measure_Pin(US_GPIO_PORT, US_TRIG_C_PIN, US_GPIO_PORT, US_ECHO_C_PIN);
+#else
+    return 0;
+#endif
+}
+
+/**
+ * @brief  Check if any sensor detects collision threshold
  * @retval true if collision imminent, false otherwise
  */
 bool Ultrasonic_CheckCollision(void)
 {
 #if ULTRASONIC_ENABLED
-    uint16_t a = Ultrasonic_MeasureA();
-    uint16_t b = Ultrasonic_MeasureB();
-    return (a > 0 && a <= COLLISION_DISTANCE_STOP) || (b > 0 && b <= COLLISION_DISTANCE_STOP);
+    uint16_t left = Ultrasonic_MeasureA();
+    uint16_t right = Ultrasonic_MeasureB();
+    uint16_t front = Ultrasonic_MeasureC();
+    
+    // Check side walls
+    bool side_collision = (left > 0 && left <= COLLISION_DISTANCE_STOP) || 
+                         (right > 0 && right <= COLLISION_DISTANCE_STOP);
+    
+    // Check front obstacle
+    bool front_collision = (front > 0 && front <= FRONT_OBSTACLE_STOP);
+    
+    return side_collision || front_collision;
 #else
     return false;
 #endif

@@ -1,0 +1,2 @@
+../Middlewares/Third_Party/vl53l0x_api/platform/src/vl53l0x_platform_log.c:44:9:VL53L0X_trace_config	7
+../Middlewares/Third_Party/vl53l0x_api/platform/src/vl53l0x_platform_log.c:80:6:trace_print_module_function	5
