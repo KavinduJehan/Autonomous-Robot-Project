@@ -111,18 +111,42 @@ void Error_Handler(void);
 #define HEARTBEAT_LED_PIN   GPIO_PIN_12   // PB12 - Heartbeat LED
 #define HEARTBEAT_LED_PORT  GPIOB
 
-/* IR Wall Sensors (Analog) - use ADC1 on PA4/PA5 */
-#define IR_LEFT_PIN         GPIO_PIN_4    // PA4 - ADC1_IN4
-#define IR_RIGHT_PIN        GPIO_PIN_5    // PA5 - ADC1_IN5
-#define IR_SENSOR_PORT      GPIOA
+/* VL53L0X Time-of-Flight Sensors - I2C2 on PB3/PB10 */
+// Two sensors mounted at 45° angles for junction detection and YOLO distance fusion
+// Sensor 1: Left 45° (I2C address 0x30 after init)
+// Sensor 2: Right 45° (I2C address 0x31 after init)
+#define TOF_I2C_SDA_PIN     GPIO_PIN_3    // PB3 - I2C2_SDA
+#define TOF_I2C_SCL_PIN     GPIO_PIN_10   // PB10 - I2C2_SCL
+#define TOF_I2C_PORT        GPIOB
+#define TOF_I2C_AF          GPIO_AF4_I2C2
 
-/* Ultrasonic Sensors (HC-SR04) - Wall Collision Detection */
+#define TOF_XSHUT1_PIN      GPIO_PIN_4    // PA4 - XSHUT for left sensor
+#define TOF_XSHUT2_PIN      GPIO_PIN_5    // PA5 - XSHUT for right sensor
+#define TOF_XSHUT_PORT      GPIOA
+
+/* ToF Sensor Configuration */
+#define TOF_ENABLED                1        // Master enable for ToF sensors
+#define TOF_I2C_TIMEOUT_MS         100      // I2C transaction timeout
+#define TOF_MEASURE_INTERVAL_MS    20       // Read at 50Hz (faster than ultrasonic)
+#define TOF_DEFAULT_ADDR           0x29     // Factory default I2C address (shifted: 0x52)
+#define TOF_SENSOR1_ADDR           0x30     // Reassigned address for left sensor
+#define TOF_SENSOR2_ADDR           0x31     // Reassigned address for right sensor
+
+/* ToF detection thresholds for junction detection (mm) */
+#define TOF_JUNCTION_THRESHOLD     1500     // > 150cm indicates open space (possible turn)
+#define TOF_CORRIDOR_THRESHOLD     800      // 80cm typical corridor side clearance
+#define TOF_OBSTACLE_THRESHOLD     300      // < 30cm obstacle detected
+
+/* Ultrasonic Sensors (HC-SR04) - Wall Collision & Obstacle Detection */
 // Sensor A faces LEFT wall (while moving forward)
 // Sensor B faces RIGHT wall (while moving forward)
-#define US_TRIG_A_PIN       GPIO_PIN_0    // PB0 - Trigger A
-#define US_TRIG_B_PIN       GPIO_PIN_1    // PB1 - Trigger B
-#define US_ECHO_A_PIN       GPIO_PIN_6    // PB6 - Echo A
-#define US_ECHO_B_PIN       GPIO_PIN_7    // PB7 - Echo B
+// Sensor C faces FRONT (obstacle detection)
+#define US_TRIG_A_PIN       GPIO_PIN_1    // PB1 - Trigger A (LEFT)
+#define US_TRIG_B_PIN       GPIO_PIN_2    // PB2 - Trigger B (RIGHT)
+#define US_TRIG_C_PIN       GPIO_PIN_0    // PB0 - Trigger C (FRONT)
+#define US_ECHO_A_PIN       GPIO_PIN_7    // PB7 - Echo A (LEFT)
+#define US_ECHO_B_PIN       GPIO_PIN_8    // PB8 - Echo B (RIGHT)
+#define US_ECHO_C_PIN       GPIO_PIN_6    // PB6 - Echo C (FRONT)
 #define US_GPIO_PORT        GPIOB
 
 /* Ultrasonic configuration */
@@ -140,20 +164,26 @@ void Error_Handler(void);
  * Note: HC-SR04 minimum reliable range is ~2cm. We set STOP at 3cm to avoid
  * constant e-stops when running very close (~2.5cm) to the walls.
  */
-#define COLLISION_DISTANCE_STOP       2.5      // Hard stop if closer than this
-#define COLLISION_DISTANCE_SLOW       5     // Apply steering/centering below this
+#define COLLISION_DISTANCE_STOP       2.5      // Hard stop if closer than this (side walls)
+#define COLLISION_DISTANCE_SLOW       5     // Apply steering/centering below this (side walls)
 #define COLLISION_DISTANCE_WARN       50     // Optional warning distance
+
+/* Front obstacle detection thresholds (cm) */
+#define OBSTACLE_DISTANCE_STOP        15    // Emergency stop if obstacle closer than 15cm
+#define OBSTACLE_DISTANCE_SLOW        30    // Reduce speed if obstacle within 30cm
+#define OBSTACLE_DISTANCE_WARN        50    // Warning distance
 
 /* Wall-following steering gain (fallback when only one sensor is valid) */
 #define WALL_CORR_GAIN_PCT_PER_CM      2     // % speed correction per cm inside threshold
 
 /* Center-seeking PID control (active only while moving forward) */
 #define CENTERING_PID_ENABLED          1
-#define CENTER_PID_KP                  1.0f   // % per cm
-#define CENTER_PID_KI                  0.00f  // % per (cm*s) (start 0 to avoid windup)
-#define CENTER_PID_KD                  0.20f  // % per (cm/s)
-#define CENTER_DEADBAND_CM             1.0f   // ignore tiny error band to avoid chatter
-#define CENTER_CORR_MAX                40.0f  // max magnitude of correction (%)
+/* Default PID values (can be tuned via UART commands P/I/D) */
+#define CENTER_PID_KP_DEFAULT          1.2f   // % per cm (increased for faster response)
+#define CENTER_PID_KI_DEFAULT          0.05f  // % per (cm*s) (small integral to eliminate steady-state error)
+#define CENTER_PID_KD_DEFAULT          0.3f   // % per (cm/s) (increased damping)
+#define CENTER_DEADBAND_CM             0.5f   // ignore tiny error band to avoid chatter (reduced for precision)
+#define CENTER_CORR_MAX                50.0f  // max magnitude of correction (%) (increased range)
 
 /* UART Pin Definitions - USART1 */
 #define UART_TX_PIN       GPIO_PIN_9   // PA9 - USART1_TX
@@ -174,6 +204,16 @@ void Error_Handler(void);
 #define CMD_SPEED_SLOW    '1'   // Set speed to 40%
 #define CMD_SPEED_MEDIUM  '2'   // Set speed to 70%
 #define CMD_SPEED_FAST    '3'   // Set speed to 100%
+
+/* PID Tuning Commands (for runtime adjustment) */
+#define CMD_PID_KP_UP     'P'   // Increase Kp by 0.1
+#define CMD_PID_KP_DOWN   'p'   // Decrease Kp by 0.1
+#define CMD_PID_KI_UP     'I'   // Increase Ki by 0.01
+#define CMD_PID_KI_DOWN   'i'   // Decrease Ki by 0.01
+#define CMD_PID_KD_UP     'J'   // Increase Kd by 0.05 (changed from 'D' to avoid conflict)
+#define CMD_PID_KD_DOWN   'j'   // Decrease Kd by 0.05 (changed from 'd')
+#define CMD_PID_RESET     'K'   // Reset PID to defaults
+#define CMD_PID_REPORT    'Q'   // Report current PID values
 #define CMD_ACCEL_ENABLE  'M'   // Enable smooth acceleration/deceleration (M for sMooth)
 #define CMD_ACCEL_DISABLE 'Z'   // Disable acceleration (instant speed change)
 #define CMD_ACCEL_DISABLE_ALT 'D' // Alternate disable (was used for this before)
@@ -194,6 +234,7 @@ void Error_Handler(void);
 void GPIO_Init(void);
 void TIM5_PWM_Init(void);
 void USART1_Init(void);
+void I2C2_Init(void);
 void Motor_SetSpeed(uint8_t motor1_in1, uint8_t motor1_in2, uint8_t motor2_in3, uint8_t motor2_in4);
 void Motor_SetSpeed_Smooth(uint8_t target_m1_in1, uint8_t target_m1_in2, uint8_t target_m2_in3, uint8_t target_m2_in4);
 void Motor_Forward(uint8_t speed);
@@ -205,14 +246,18 @@ void Motor_Stop_Smooth(void);
 void Process_Command(uint8_t cmd);
 void Safety_Check(void);
 
-/* IR Sensors API */
-void IR_Init(void);
-void IR_ReadRaw(uint16_t* left, uint16_t* right);
+/* ToF Sensors API */
+void ToF_Init(void);
+uint16_t ToF_ReadSensor1(void);  // Left 45° sensor (mm)
+uint16_t ToF_ReadSensor2(void);  // Right 45° sensor (mm)
+bool ToF_DetectJunction(void);   // Check if junction is detected
+void ToF_Task(void const * argument);
 
 /* Ultrasonic Sensor API */
 void Ultrasonic_Init(void);
 uint16_t Ultrasonic_MeasureA(void); // Left-facing sensor (A)
 uint16_t Ultrasonic_MeasureB(void); // Right-facing sensor (B)
+uint16_t Ultrasonic_MeasureC(void); // Front-facing sensor (C)
 bool Ultrasonic_CheckCollision(void);
 void Ultrasonic_Task(void const * argument);
 
