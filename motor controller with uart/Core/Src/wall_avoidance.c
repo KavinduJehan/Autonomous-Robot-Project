@@ -21,6 +21,10 @@
 /* Private macro -------------------------------------------------------------*/
 
 /* Private variables ---------------------------------------------------------*/
+/* Runtime-adjustable PID gains (initialized to defaults, tunable via UART) */
+float CENTER_PID_KP = CENTER_PID_KP_DEFAULT;
+float CENTER_PID_KI = CENTER_PID_KI_DEFAULT;
+float CENTER_PID_KD = CENTER_PID_KD_DEFAULT;
 
 /* Private function prototypes -----------------------------------------------*/
 

@@ -24,6 +24,12 @@ extern "C" {
 
 /* Exported macro ------------------------------------------------------------*/
 
+/* Exported variables --------------------------------------------------------*/
+/* Runtime-adjustable PID gains (can be tuned via UART commands) */
+extern float CENTER_PID_KP;
+extern float CENTER_PID_KI;
+extern float CENTER_PID_KD;
+
 /* Exported functions prototypes ---------------------------------------------*/
 
 /**

@@ -8,6 +8,7 @@
  */
 
 #include "vl53l0x_pololu.h"
+#include <stdio.h>
 #include "uart_comm.h"
 #include "cmsis_os.h"
 #include <string.h>

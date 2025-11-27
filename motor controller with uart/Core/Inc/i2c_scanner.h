@@ -5,7 +5,7 @@
 #ifndef I2C_SCANNER_H
 #define I2C_SCANNER_H
 
-#include "stm32f4xx_hal.h"
+#include "main.h"
 
 void I2C_Scanner(I2C_HandleTypeDef *hi2c);
 

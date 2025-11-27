@@ -64,8 +64,8 @@ all: main-build
 main-build: motor\ controller\ with\ uart.elf secondary-outputs
 
 # Tool invocations
-motor\ controller\ with\ uart.elf motor\ controller\ with\ uart.map: $(OBJS) $(USER_OBJS) C:\E\ Dirve\Robot\ Project\motor\ controller\ with\ uart\STM32F401RCTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "motor controller with uart.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\E Dirve\Robot Project\motor controller with uart\STM32F401RCTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="motor controller with uart.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+motor\ controller\ with\ uart.elf motor\ controller\ with\ uart.map: $(OBJS) $(USER_OBJS) C:\E\ Dirve\Rextro\Autonomous\ Car\ Prototype\ -\ tof-done\motor\ controller\ with\ uart\STM32F401RCTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "motor controller with uart.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\E Dirve\Rextro\Autonomous Car Prototype - tof-done\motor controller with uart\STM32F401RCTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="motor controller with uart.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
