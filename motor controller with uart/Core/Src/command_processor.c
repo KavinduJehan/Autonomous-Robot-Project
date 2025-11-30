@@ -307,6 +307,19 @@ void Command_Process(uint8_t cmd)
 #endif
             break;
         }
+
+        case 'Q':
+        {
+            /* Diagnostic: report ToF sensor readiness and last-known distances */
+            uint16_t l = 0, r = 0;
+            bool ready = ToF_SensorsReady();
+            ToF_GetDistances(&l, &r);
+            UART_SendString("TOFSTAT ");
+            UART_SendString(ready ? "ready=1 " : "ready=0 ");
+            UART_SendString("L="); UART_SendUInt(l); UART_SendString("mm ");
+            UART_SendString("R="); UART_SendUInt(r); UART_SendString("mm\r\n");
+            break;
+        }
             
         default:
             Motor_Stop();

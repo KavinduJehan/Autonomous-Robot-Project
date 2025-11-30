@@ -1,3 +1,3 @@
 ../Core/Src/command_processor.c:18:6:Command_Task	40	static
-../Core/Src/command_processor.c:58:6:Command_Process	40	static
-../Core/Src/command_processor.c:295:6:Command_SafetyCheck	8	static
+../Core/Src/command_processor.c:64:6:Command_Process	40	static
+../Core/Src/command_processor.c:324:6:Command_SafetyCheck	8	static

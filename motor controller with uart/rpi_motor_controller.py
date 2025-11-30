@@ -413,7 +413,8 @@ class MotorController:
                 # For other messages (ACKs, CMD:, ToF replies, debug) process/print appropriately.
                 # Detect ToF reply format (case-insensitive) and parse robustly
                 lower = line.lower()
-                if lower.startswith("tof ") or lower.startswith("tof l=") or "tof " in lower:
+                # Accept any firmware line that mentions ToF (includes 'tof', 'tofstat', etc.)
+                if 'tof' in lower:
                     print(f"  📩 STM32: {line}")
                     parts = line.replace(',', ' ').split()
                     parsed = False
@@ -465,8 +466,8 @@ class MotorController:
                             print(f"  ⚠️  Failed to send ACK: {e}")
                         print("  ▶ Wait for operator to send direction ('a'/'d') or use API to send.")
                     else:
-                    # Generic debug/ACK lines
-                    print(f"  📩 STM32: {line}")
+                        # Generic debug/ACK lines
+                        print(f"  📩 STM32: {line}")
 
         except Exception as e:
             print(f"  ⚠️  Error parsing UART response: {e}")
@@ -703,6 +704,41 @@ class MotorController:
         print("  ✗ ToF: no response from STM32 after multiple attempts")
         print(f"  💾 Last cached ToF: Left: {self.tof_left_mm}mm, Right: {self.tof_right_mm}mm")
 
+    async def request_tof_status(self):
+        """Request ToF sensor status (diagnostic) from STM32 using raw 'Q' command.
+
+        Firmware responds with a line like: "TOFSTAT ready=1 L=123 R=456"
+        This method sends the raw byte and waits briefly for an update.
+        """
+        old_time = self.last_tof_update
+
+        # Send raw diagnostic byte 'Q' (firmware diagnostic command)
+        await self._send_raw(b'Q')
+        print("📡 ToF status request sent")
+
+        # Wait up to 2 seconds for either a ToF update or any response
+        waited = 0.0
+        timeout = 2.0
+        while waited < timeout:
+            await asyncio.sleep(0.1)
+            waited += 0.1
+            if self.last_tof_update > old_time:
+                break
+
+        # Report what we have
+        if self.last_tof_update > old_time:
+            left = self.tof_left_mm
+            right = self.tof_right_mm
+            if left == 8191 or right == 8191:
+                lstr = 'OUT_OF_RANGE' if left == 8191 else f'{left}mm'
+                rstr = 'OUT_OF_RANGE' if right == 8191 else f'{right}mm'
+                print(f"  ✓ ToF Left: {lstr}, Right: {rstr}")
+            else:
+                print(f"  ✓ ToF Left: {left}mm, Right: {right}mm")
+        else:
+            print("  ⚠️  No ToF status reply from STM32 (check wiring, power, and that firmware was flashed)")
+            print(f"  💾 Last cached ToF: Left: {self.tof_left_mm}mm, Right: {self.tof_right_mm}mm")
+
     def compute_turn_duration(self) -> float:
         """
         Compute a turn duration (seconds) for an approximate 90-degree spot turn
@@ -808,6 +844,7 @@ class InteractiveController:
         print("\n📡 Sensors:")
         print("  U - Ultrasonic Ping (check wall distances)")
         print("  O - ToF Ping (left/right 45° sensors)")
+        print("  Y - ToF Status (diagnostic)")
         print("\n🛡 Safety & System:")
         print("  E - Emergency Stop")
         print("  R - Reset Emergency Stop")
@@ -867,6 +904,8 @@ class InteractiveController:
                     await self.motor.request_ultrasonic_ping()
                 elif cmd == 'o':
                     await self.motor.request_tof_ping()
+                elif cmd == 'y':
+                    await self.motor.request_tof_status()
                 elif cmd == 'e':
                     await self.motor.stop()
                     self.motor.emergency_stop_active = True
