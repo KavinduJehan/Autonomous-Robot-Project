@@ -18,4 +18,4 @@
 ../Core/Src/tof_sensors.c:274:6:ToF_DetectJunction	4	static
 ../Core/Src/tof_sensors.c:278:18:ToF_GetJunctionInfo	16	static
 ../Core/Src/tof_sensors.c:282:13:ToF_StatusToString	16	static
-../Core/Src/tof_sensors.c:294:6:ToF_Task	184	static
+../Core/Src/tof_sensors.c:294:6:ToF_Task	160	static

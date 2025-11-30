@@ -48,7 +48,8 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../Middlewares/Third_Party/FreeRTOS/Source/include/timers.h \
  ../Core/Inc/motor_control.h ../Core/Inc/main.h ../Core/Inc/uart_comm.h \
  ../Core/Inc/led_indicators.h ../Core/Inc/ultrasonic.h \
- ../Core/Inc/command_processor.h ../Core/Inc/wall_avoidance.h
+ ../Core/Inc/command_processor.h ../Core/Inc/wall_avoidance.h \
+ ../Core/Inc/tof_sensors.h ../Core/Inc/i2c_scanner.h
 ../Core/Inc/main.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h:
 ../Core/Inc/stm32f4xx_hal_conf.h:
@@ -104,3 +105,5 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Core/Inc/ultrasonic.h:
 ../Core/Inc/command_processor.h:
 ../Core/Inc/wall_avoidance.h:
+../Core/Inc/tof_sensors.h:
+../Core/Inc/i2c_scanner.h:

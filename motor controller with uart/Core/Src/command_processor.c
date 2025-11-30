@@ -14,6 +14,24 @@
 #include "main.h"
 #include "cmsis_os.h"
 
+/* FreeRTOS task: dequeue UART commands and process them */
+void Command_Task(void const * argument)
+{
+    (void) argument;
+    for(;;)
+    {
+        osEvent evt = osMessageGet(uartCmdQueueHandle, osWaitForever);
+        if (evt.status == osEventMessage)
+        {
+            uint32_t val = evt.value.v;
+            uint8_t cmd = (uint8_t)(val & 0xFF);
+            /* Normalize lowercase to uppercase for robustness */
+            if (cmd >= 'a' && cmd <= 'z') cmd -= 32;
+            Command_Process(cmd);
+        }
+    }
+}
+
 /* Private typedef -----------------------------------------------------------*/
 
 /* Private define ------------------------------------------------------------*/
@@ -22,6 +40,17 @@
 
 /* Private variables ---------------------------------------------------------*/
 volatile uint32_t last_command_time = 0;
+/* Short debounce window to ignore rapid repeated turn commands that may be
+ * queued by the UART input (e.g., host heartbeat re-sending the last command).
+ * After performing a spot-turn we set this to HAL_GetTick() + debounce_ms.
+ */
+static volatile uint32_t ignore_turns_until = 0;
+
+/* Junction coordination flags (used to handshake with Pi) */
+volatile bool junction_ack_received = false;      /* Set by Command_Process when 'K' received */
+volatile bool junction_mode_active = false;       /* Set by ToF task while handling a junction */
+volatile bool junction_direction_received = false;/* Set by Command_Process when L/T received in junction mode */
+volatile uint8_t junction_direction_cmd = 0;     /* Stores the direction command received from Pi (e.g., CMD_LEFT/CMD_RIGHT) */
 
 /* Private function prototypes -----------------------------------------------*/
 
@@ -36,6 +65,13 @@ void Command_Process(uint8_t cmd)
 {
     switch(cmd)
     {
+        /* Global ACK for junction: single-byte 'K' acknowledges the notification */
+        case 'K':
+            junction_ack_received = true;
+            /* keep last_command_time updated so safety doesn't trigger */
+            last_command_time = HAL_GetTick();
+            break;
+
         case CMD_FORWARD:
             Motor_Forward(current_speed);
             last_movement_cmd = CMD_FORWARD;
@@ -47,13 +83,82 @@ void Command_Process(uint8_t cmd)
             break;
             
         case CMD_LEFT:
-            Motor_Left(current_speed);
-            last_movement_cmd = CMD_LEFT;
+        case CMD_LEFT_ALT:
+            /* If we're in junction mode and waiting for remote direction, accept
+             * the received direction but don't immediately execute it here. The
+             * ToF/Junction task will perform the turn at the appropriate time.
+             */
+            if (junction_mode_active)
+            {
+                junction_direction_received = true;
+                junction_direction_cmd = CMD_LEFT;
+                break;
+            }
+            /* Debounce: ignore if we're inside the ignore window */
+            if (HAL_GetTick() < ignore_turns_until)
+            {
+                /* Drop this command - it was likely queued before the previous turn completed */
+                break;
+            }
+            /* If we're currently moving, gently stop first */
+            if (motors_moving && last_movement_cmd != CMD_STOP)
+            {
+                Motor_Stop_Smooth();
+            }
+            /* Compute scaled duration based on current_speed (inverse scale):
+             * higher speed -> shorter turn time, lower speed -> longer time.
+             */
+            {
+                uint32_t turn_ms = TURN_90_MS;
+                if (current_speed > 0)
+                {
+                    turn_ms = (TURN_90_MS * 100U) / (uint32_t)current_speed;
+                }
+                if (turn_ms < TURN_90_MS_MIN) turn_ms = TURN_90_MS_MIN;
+                if (turn_ms > TURN_90_MS_MAX) turn_ms = TURN_90_MS_MAX;
+
+                /* Perform a smooth spot turn (blocks during turn) */
+                Motor_SpotTurnSmooth(current_speed, turn_ms, true);
+            }
+            /* Ensure state shows stopped after the turn */
+            motors_moving = false;
+            last_movement_cmd = CMD_STOP;
+            /* Prevent immediate repeated turns from queued messages (debounce) */
+            ignore_turns_until = HAL_GetTick() + 500;
             break;
             
         case CMD_RIGHT:
-            Motor_Right(current_speed);
-            last_movement_cmd = CMD_RIGHT;
+        case CMD_RIGHT_ALT:
+            if (junction_mode_active)
+            {
+                junction_direction_received = true;
+                junction_direction_cmd = CMD_RIGHT;
+                break;
+            }
+            /* Debounce: ignore if we're inside the ignore window */
+            if (HAL_GetTick() < ignore_turns_until)
+            {
+                break;
+            }
+            if (motors_moving && last_movement_cmd != CMD_STOP)
+            {
+                Motor_Stop_Smooth();
+            }
+            {
+                uint32_t turn_ms = TURN_90_MS;
+                if (current_speed > 0)
+                {
+                    turn_ms = (TURN_90_MS * 100U) / (uint32_t)current_speed;
+                }
+                if (turn_ms < TURN_90_MS_MIN) turn_ms = TURN_90_MS_MIN;
+                if (turn_ms > TURN_90_MS_MAX) turn_ms = TURN_90_MS_MAX;
+
+                Motor_SpotTurnSmooth(current_speed, turn_ms, false);
+            }
+            motors_moving = false;
+            last_movement_cmd = CMD_STOP;
+            /* Debounce further turn commands for a short window */
+            ignore_turns_until = HAL_GetTick() + 500;
             break;
             
         case CMD_STOP:
@@ -164,13 +269,41 @@ void Command_Process(uint8_t cmd)
             uint16_t a = Ultrasonic_MeasureA();
             osDelay(5);
             uint16_t b = Ultrasonic_MeasureB();
-            UART_SendString("US A="); 
-            UART_SendUInt(a); 
-            UART_SendString("cm B="); 
-            UART_SendUInt(b); 
-            UART_SendCRLF();
+            osDelay(5);
+            uint16_t c = Ultrasonic_MeasureC();
+
+            /* Print all three sensors with units so host parsers can read them */
+            UART_SendString("US A=");
+            UART_SendUInt(a);
+            UART_SendString("cm B=");
+            UART_SendUInt(b);
+            UART_SendString("cm C=");
+            UART_SendUInt(c);
+            UART_SendString("cm\r\n");
 #else
             UART_SendString("US disabled\r\n");
+#endif
+            break;
+        }
+        
+        case CMD_TOF_PING:
+        {
+            /* Immediate ACK for host */
+            UART_SendString("ACK O\r\n");
+#if defined(TOF_MEASURE_INTERVAL_MS)
+            /* Read both ToF sensors single-shot and report in mm */
+            uint16_t left = ToF_ReadSensor1();
+            osDelay(5);
+            uint16_t right = ToF_ReadSensor2();
+
+            /* Print in a concise, parseable format */
+            UART_SendString("ToF L=");
+            UART_SendUInt(left);
+            UART_SendString("mm R=");
+            UART_SendUInt(right);
+            UART_SendString("mm\r\n");
+#else
+            UART_SendString("ToF disabled\r\n");
 #endif
             break;
         }
@@ -197,3 +330,7 @@ void Command_SafetyCheck(void)
         last_movement_cmd = CMD_STOP;
     }
 }
+/* Command_TurnCheck removed: spot turns are executed synchronously by
+ * Command_Process using Motor_SpotTurnSmooth(), so no background timer is
+ * required.
+ */

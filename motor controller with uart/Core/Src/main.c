@@ -54,6 +54,8 @@
 #include "ultrasonic.h"
 #include "command_processor.h"
 #include "wall_avoidance.h"
+#include "tof_sensors.h"
+#include "i2c_scanner.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -77,6 +79,9 @@ I2C_HandleTypeDef hi2c2;
 UART_HandleTypeDef huart2;
 
 osThreadId defaultTaskHandle;
+osThreadId tofTaskHandle;
+osThreadId cmdTaskHandle;
+osThreadId wallTaskHandle;
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -154,6 +159,14 @@ int main(void)
     /* Initialize USART1 for command reception */
     UART_Init();
 
+    /* Ensure ToF XSHUT pins are configured and power sensors for scan */
+    ToF_GPIO_Init();
+    HAL_GPIO_WritePin(TOF_XSHUT_PORT, TOF_XSHUT1_PIN | TOF_XSHUT2_PIN, GPIO_PIN_SET);
+    HAL_Delay(10);
+
+    /* Run I2C bus scan to list devices (helpful to confirm VL53L0X presence) */
+    I2C_Scanner(&hi2c2);
+
 #if DEBUG_BOOT_BANNER
     /* Print boot banner */
     UART_SendCRLF();
@@ -216,6 +229,15 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_THREADS */
     /* add threads, ... */
+    /* Create ToF sensor task (reads VL53L0X sensors at ~50Hz) */
+    osThreadDef(tofTask, ToF_Task, osPriorityNormal, 0, 256);
+    tofTaskHandle = osThreadCreate(osThread(tofTask), NULL);
+    /* Create UART command processing task */
+    osThreadDef(cmdTask, Command_Task, osPriorityAboveNormal, 0, 128);
+    cmdTaskHandle = osThreadCreate(osThread(cmdTask), NULL);
+    /* Create Wall Avoidance / Ultrasonic task (centering + side safety) */
+    osThreadDef(wallTask, WallAvoidance_Task, osPriorityAboveNormal, 0, 256);
+    wallTaskHandle = osThreadCreate(osThread(wallTask), NULL);
   /* USER CODE END RTOS_THREADS */
 
   /* Start scheduler */
@@ -395,6 +417,8 @@ void StartDefaultTask(void const * argument)
             }
         }
 #endif
+        /* Housekeeping: check for command safety timeout */
+        Command_SafetyCheck();
         osDelay(250);
     }
   /* USER CODE END 5 */

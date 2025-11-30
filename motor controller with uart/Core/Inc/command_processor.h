@@ -35,6 +35,10 @@ extern volatile uint32_t last_command_time;
  */
 void Command_Process(uint8_t cmd);
 
+/* FreeRTOS task to handle UART commands from queue */
+void Command_Task(void const * argument);
+
+
 /**
  * @brief  Safety check - emergency stop if no command received
  * @retval None

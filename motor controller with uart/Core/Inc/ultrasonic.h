@@ -54,6 +54,12 @@ uint16_t Ultrasonic_MeasureA(void);
 uint16_t Ultrasonic_MeasureB(void);
 
 /**
+ * @brief  Measure distance from front sensor (Sensor C)
+ * @retval Distance in centimeters (0-400), 0 on timeout
+ */
+uint16_t Ultrasonic_MeasureC(void);
+
+/**
  * @brief  Check if either sensor detects collision threshold
  * @retval true if collision imminent, false otherwise
  */

@@ -1,6 +1,8 @@
 #include "tof_sensors.h"
 #include "vl53l0x_pololu.h"
 #include "uart_comm.h"
+#include "motor_control.h"
+#include "ultrasonic.h"
 #include "cmsis_os.h"
 #include <stdio.h>
 #include <string.h>
@@ -312,6 +314,9 @@ void ToF_Task(void const * argument) {
     UART_SendString("ToF Task: Running at 50Hz\r\n\r\n");
     
     uint32_t error_count = 0;
+    /* Previous sample cache for jump detection */
+    uint16_t prev_left = 0, prev_right = 0;
+    uint16_t prev_us_left = 0, prev_us_right = 0, prev_us_front = 0;
     for(;;) {
         /* Read sensor 1 */
         left_mm = ToF_ReadSensor1();
@@ -333,28 +338,146 @@ void ToF_Task(void const * argument) {
         
         /* Update junction detection */
         ToF_UpdateJunctionDetection();
-        
-        /* Debug output every 1 second */
-        read_count++;
-        if ((read_count % 50) == 0) {
-            ToF_JunctionInfo info = ToF_GetJunctionInfo();
-            
-            snprintf(msg, sizeof(msg), 
-                     "ToF: L=%4dmm R=%4dmm | ",
-                     info.left_mm, info.right_mm);
-            UART_SendString(msg);
-            
-            if (info.is_junction) {
-                UART_SendString("JUNCTION (both open)\r\n");
-            } else if (info.is_left_turn) {
-                UART_SendString("LEFT TURN available\r\n");
-            } else if (info.is_right_turn) {
-                UART_SendString("RIGHT TURN available\r\n");
-            } else {
-                UART_SendString("Corridor\r\n");
+
+        /* --- Junction / opening detection logic ---
+         * Detect sudden ToF increases (opening on a side) and classify as
+         * left-turn / right-turn candidate or full junction. Use ultrasonic
+         * sensors to confirm physical crossing for safety before executing
+         * any maneuver.
+         */
+        {
+            bool left_jump = false;
+            bool right_jump = false;
+            if (prev_left > 0 && tof_left45_mm >= prev_left + TOF_JUMP_DELTA_MM) left_jump = true;
+            if (prev_right > 0 && tof_right45_mm >= prev_right + TOF_JUMP_DELTA_MM) right_jump = true;
+
+            /* If both jumped -> junction detected */
+            if (left_jump && right_jump && !junction_info.is_junction)
+            {
+                /* Mark junction mode and notify host */
+                junction_info.left_mm = tof_left45_mm;
+                junction_info.right_mm = tof_right45_mm;
+                junction_info.left_open = true;
+                junction_info.right_open = true;
+                junction_info.is_junction = true;
+
+                /* Slow down smoothly */
+                Motor_Stop_Smooth();
+
+                /* Notify Pi and require ACK */
+                {
+                    char buf[80];
+                    snprintf(buf, sizeof(buf), "JUNC L=%u R=%u\r\n", (unsigned)tof_left45_mm, (unsigned)tof_right45_mm);
+                    UART_SendString(buf);
+                }
+
+                /* Wait for ACK from Pi */
+                junction_ack_received = false;
+                junction_mode_active = true;
+                uint32_t start = HAL_GetTick();
+                while (!junction_ack_received && (HAL_GetTick() - start) < JUNCTION_ACK_TIMEOUT_MS)
+                {
+                    osDelay(10);
+                }
+
+                if (!junction_ack_received)
+                {
+                    /* No ACK — resume but keep junction state for a short window */
+                    junction_mode_active = false;
+                }
+                else
+                {
+                    /* ACK received — now wait until ultrasonic front detects robot on the junction */
+                    uint32_t wait_start = HAL_GetTick();
+                    bool on_junction = false;
+                    while ((HAL_GetTick() - wait_start) < JUNCTION_DIRECTION_TIMEOUT_MS)
+                    {
+                        uint16_t usc = Ultrasonic_MeasureC();
+                        if (prev_us_front > 0 && usc >= prev_us_front + US_JUMP_DELTA_CM)
+                        {
+                            on_junction = true;
+                            break;
+                        }
+                        osDelay(50);
+                    }
+
+                    /* Now wait for direction command from Pi (set by Command_Process when in junction_mode_active) */
+                    uint32_t dir_start = HAL_GetTick();
+                    while (!junction_direction_received && (HAL_GetTick() - dir_start) < JUNCTION_DIRECTION_TIMEOUT_MS)
+                    {
+                        osDelay(10);
+                    }
+
+                    if (junction_direction_received)
+                    {
+                        /* Execute the requested turn if we confirmed on_junction (or allow if timeout) */
+                        uint32_t turn_ms = TURN_90_MS;
+                        if (current_speed > 0) turn_ms = (TURN_90_MS * 100U) / (uint32_t)current_speed;
+                        if (turn_ms < TURN_90_MS_MIN) turn_ms = TURN_90_MS_MIN;
+                        if (turn_ms > TURN_90_MS_MAX) turn_ms = TURN_90_MS_MAX;
+
+                        if (junction_direction_cmd == CMD_LEFT)
+                        {
+                            Motor_SpotTurnSmooth(current_speed, turn_ms, true);
+                        }
+                        else if (junction_direction_cmd == CMD_RIGHT)
+                        {
+                            Motor_SpotTurnSmooth(current_speed, turn_ms, false);
+                        }
+                    }
+
+                    /* Reset junction state */
+                    junction_mode_active = false;
+                    junction_direction_received = false;
+                    junction_direction_cmd = 0;
+                }
+            }
+            else if ((left_jump && !right_jump) || (right_jump && !left_jump))
+            {
+                /* Candidate single-side turn (e.g., left opening) */
+                bool is_left = left_jump && !right_jump;
+                /* Slow down and wait for ultrasonic confirmation on that side */
+                Motor_Stop_Smooth();
+                uint32_t wait_start = HAL_GetTick();
+                bool confirmed = false;
+                while ((HAL_GetTick() - wait_start) < JUNCTION_ACK_TIMEOUT_MS)
+                {
+                    uint16_t us_side = is_left ? Ultrasonic_MeasureA() : Ultrasonic_MeasureB();
+                    uint16_t prev_us_side = is_left ? prev_us_left : prev_us_right;
+                    if (prev_us_side > 0 && us_side >= prev_us_side + US_JUMP_DELTA_CM)
+                    {
+                        confirmed = true;
+                        break;
+                    }
+                    osDelay(25);
+                }
+
+                if (confirmed)
+                {
+                    /* Perform spot turn */
+                    uint32_t turn_ms = TURN_90_MS;
+                    if (current_speed > 0) turn_ms = (TURN_90_MS * 100U) / (uint32_t)current_speed;
+                    if (turn_ms < TURN_90_MS_MIN) turn_ms = TURN_90_MS_MIN;
+                    if (turn_ms > TURN_90_MS_MAX) turn_ms = TURN_90_MS_MAX;
+
+                    Motor_SpotTurnSmooth(current_speed, turn_ms, is_left);
+                }
+                /* otherwise give up and continue normal operation */
             }
         }
         
+        /* Debug output intentionally suppressed: ToF will only report on explicit host request
+         * (via the 'o' command). This reduces UART traffic. Keep internal state updated.
+         */
+        (void)msg; (void)read_count;
+        
+        /* Save previous samples for next loop */
+        prev_left = tof_left45_mm;
+        prev_right = tof_right45_mm;
+        prev_us_left = Ultrasonic_MeasureA();
+        prev_us_right = Ultrasonic_MeasureB();
+        prev_us_front = Ultrasonic_MeasureC();
+
         osDelay(TOF_MEASURE_INTERVAL_MS);
     }
 }

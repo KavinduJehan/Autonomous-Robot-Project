@@ -117,6 +117,17 @@ void Motor_Stop(void);
  */
 void Motor_Stop_Smooth(void);
 
+/**
+ * @brief Perform a smooth spot turn: ramp up then ramp down over duration
+ * @param speed: peak turn speed (0-100)
+ * @param duration_ms: total duration of the turn in milliseconds
+ * @param left: true -> turn left, false -> turn right
+ * @note This is a blocking call (runs in motor/command thread). It first
+ *       ensures motors are set for the spot turn and then ramps speed up and
+ *       down to produce a smooth motion.
+ */
+void Motor_SpotTurnSmooth(uint8_t speed, uint32_t duration_ms, bool left);
+
 #ifdef __cplusplus
 }
 #endif

@@ -59,13 +59,14 @@ void Error_Handler(void);
 
 /* Private defines -----------------------------------------------------------*/
 
-/* USER CODE BEGIN Private defines */
+#/* USER CODE BEGIN Private defines */
 
 /* Motor Control Pin Definitions - MX1508 Motor Driver with PWM */
-#define MOTOR1_IN1_PIN    GPIO_PIN_0   // PA0 - Motor 1 IN1 - TIM3_CH1
-#define MOTOR1_IN2_PIN    GPIO_PIN_1   // PA1 - Motor 1 IN2 - TIM3_CH2
-#define MOTOR2_IN3_PIN    GPIO_PIN_2   // PA2 - Motor 2 IN3 - TIM3_CH3
-#define MOTOR2_IN4_PIN    GPIO_PIN_3   // PA3 - Motor 2 IN4 - TIM3_CH4
+#define MOTOR1_IN1_PIN    GPIO_PIN_0   // PA0 - Motor 1 IN1 - TIM5_CH1 (PWM)
+#define MOTOR1_IN2_PIN    GPIO_PIN_1   // PA1 - Motor 1 IN2 - TIM5_CH2 (PWM)
+#define MOTOR1_IN2_PIN    GPIO_PIN_1   // PA1 - Motor 1 IN2 - TIM5_CH2 (PWM)
+#define MOTOR2_IN3_PIN    GPIO_PIN_2   // PA2 - Motor 2 IN3 - TIM5_CH3 (PWM)
+#define MOTOR2_IN4_PIN    GPIO_PIN_3   // PA3 - Motor 2 IN4 - TIM5_CH4 (PWM)
 #define MOTOR_PORT        GPIOA
 
 /* PWM Configuration */
@@ -75,14 +76,25 @@ void Error_Handler(void);
 #define PWM_PERIOD        999           // 1MHz / (999+1) = 1kHz PWM
 #define PWM_MAX_DUTY      PWM_PERIOD    // 100% duty cycle
 
-/* Motor Speed Levels (0-100%) */
+/* Per-motor PWM scaling to compensate hardware differences (percentage)
+ * Example: set right motor to 95 to reduce its effective PWM to 95% of commands.
+ * Range: 0-200 (where 100 means no change)
+ */
+#ifndef MOTOR1_PWM_SCALE
+#define MOTOR1_PWM_SCALE 99 //right
+#endif
+#ifndef MOTOR2_PWM_SCALE
+#define MOTOR2_PWM_SCALE 99 //left........
+#endif
+
+#/* Motor Speed Levels (0-100%) */
 #define SPEED_STOP        0
-#define SPEED_SLOW        40
+#define SPEED_SLOW        50
 #define SPEED_MEDIUM      70
 #define SPEED_FAST        100
 
 /* Motor Kick-Start Configuration (helps overcome static friction at low speeds) */
-#define KICKSTART_ENABLED   1             // Enable kick-start pulse for low speeds
+#define KICKSTART_ENABLED   0             // Disable kick-start pulse for low speeds (removed per user request)
 #define KICKSTART_DUTY      80            // Initial boost PWM (%) for kick-start
 #define KICKSTART_DURATION  150           // Kick-start pulse duration (ms)
 
@@ -137,25 +149,49 @@ void Error_Handler(void);
 #define TOF_CORRIDOR_THRESHOLD     800      // 80cm typical corridor side clearance
 #define TOF_OBSTACLE_THRESHOLD     300      // < 30cm obstacle detected
 
+/* Junction detection tuning */
+#define TOF_JUMP_DELTA_MM         100      // sudden ToF increase (mm) indicating opening
+#define US_JUMP_DELTA_CM          30       // sudden ultrasonic increase (cm) confirming opening
+#define JUNCTION_ACK_TIMEOUT_MS   2000     // wait up to 2s for Pi ACK
+#define JUNCTION_DIRECTION_TIMEOUT_MS 5000  // wait up to 5s for Pi direction command
+
 /* Ultrasonic Sensors (HC-SR04) - Wall Collision & Obstacle Detection */
 // Sensor A faces LEFT wall (while moving forward)
 // Sensor B faces RIGHT wall (while moving forward)
 // Sensor C faces FRONT (obstacle detection)
-#define US_TRIG_A_PIN       GPIO_PIN_1    // PB1 - Trigger A (LEFT)
-#define US_TRIG_B_PIN       GPIO_PIN_2    // PB2 - Trigger B (RIGHT)
+// User mapping (verified):
+//  - LEFT (Sensor A):  TRIG = PA8,  ECHO = PB8
+//  - RIGHT (Sensor B): TRIG = PB1,  ECHO = PB7
+//  - FRONT (Sensor C): leave as PB0 trig / PB6 echo (default)
+
+/* Sensor A (LEFT) */
+#define US_TRIG_A_PORT      GPIOA
+#define US_TRIG_A_PIN       GPIO_PIN_8    // PA8 - Trigger A (LEFT)
+#define US_ECHO_A_PORT      GPIOB
+#define US_ECHO_A_PIN       GPIO_PIN_8    // PB8 - Echo A (LEFT)
+
+/* Sensor B (RIGHT) */
+#define US_TRIG_B_PORT      GPIOB
+#define US_TRIG_B_PIN       GPIO_PIN_1    // PB1 - Trigger B (RIGHT)
+#define US_ECHO_B_PORT      GPIOB
+#define US_ECHO_B_PIN       GPIO_PIN_7    // PB7 - Echo B (RIGHT)
+
+/* Sensor C (FRONT) - keep defaults */
+#define US_TRIG_C_PORT      GPIOB
 #define US_TRIG_C_PIN       GPIO_PIN_0    // PB0 - Trigger C (FRONT)
-#define US_ECHO_A_PIN       GPIO_PIN_7    // PB7 - Echo A (LEFT)
-#define US_ECHO_B_PIN       GPIO_PIN_8    // PB8 - Echo B (RIGHT)
+#define US_ECHO_C_PORT      GPIOB
 #define US_ECHO_C_PIN       GPIO_PIN_6    // PB6 - Echo C (FRONT)
-#define US_GPIO_PORT        GPIOB
 
 /* Ultrasonic configuration */
 #define ULTRASONIC_ENABLED            1      // Master enable for ultrasonic logic
 #define ULTRASONIC_TRIGGER_US         10     // Trigger pulse width (us)
 #define ULTRASONIC_TIMEOUT_US         30000  // Echo wait timeout (us)
 #define ULTRASONIC_MEASURE_INTERVAL_MS 50    // Measure at 20 Hz
-/* Debug: print periodic ultrasonic readings + LED states from the task */
-#define ULTRASONIC_DEBUG              1      // Set to 0 to disable UART debug spam
+/* Debug: print periodic ultrasonic readings + LED states from the task
+ * Set to 0 to disable periodic ultrasonic UART messages; explicit 'U' ping
+ * will still trigger a full A/B/C report via the command processor.
+ */
+#define ULTRASONIC_DEBUG              0      // Disabled: only send on explicit ping
 /* Extra debug: boot banner and UART heartbeat (to verify TX wiring) */
 #define DEBUG_BOOT_BANNER             1
 #define DEBUG_UART_HEARTBEAT          1
@@ -164,7 +200,7 @@ void Error_Handler(void);
  * Note: HC-SR04 minimum reliable range is ~2cm. We set STOP at 3cm to avoid
  * constant e-stops when running very close (~2.5cm) to the walls.
  */
-#define COLLISION_DISTANCE_STOP       2.5      // Hard stop if closer than this (side walls)
+#define COLLISION_DISTANCE_STOP       3.0      // Hard stop if closer than this (side walls)
 #define COLLISION_DISTANCE_SLOW       5     // Apply steering/centering below this (side walls)
 #define COLLISION_DISTANCE_WARN       50     // Optional warning distance
 
@@ -185,6 +221,33 @@ void Error_Handler(void);
 #define CENTER_DEADBAND_CM             0.5f   // ignore tiny error band to avoid chatter (reduced for precision)
 #define CENTER_CORR_MAX                50.0f  // max magnitude of correction (%) (increased range)
 
+/* Allow compile-time inversion of motor forward/reverse mapping.
+  Set to 1 if your H-bridge wiring or motor driver inverts directions.
+  This flips the logical Motor_Forward()/Motor_Reverse() behavior so
+  the UART command mapping remains unchanged. */
+#ifndef INVERT_MOTOR_DIRECTION
+#define INVERT_MOTOR_DIRECTION 0
+#endif
+
+/* Per-motor inversion flags. If one motor was wired reversed during assembly
+  you can invert only that motor to correct direction without swapping wires.
+  By default these follow INVERT_MOTOR_DIRECTION for backward compatibility. */
+#ifndef INVERT_MOTOR1_DIRECTION
+#define INVERT_MOTOR1_DIRECTION INVERT_MOTOR_DIRECTION
+#endif
+#ifndef INVERT_MOTOR2_DIRECTION
+#define INVERT_MOTOR2_DIRECTION INVERT_MOTOR_DIRECTION
+#endif
+
+/* Swap left/right motor logical mapping. Set to 1 if motor1/motor2 were
+  installed swapped (left motor connected to motor2 pins and vice versa).
+  Enabling this flips logical motor assignments only; it does NOT change
+  PID, centering, or other control logic. Use this when wiring cannot be
+  changed. */
+#ifndef SWAP_MOTORS
+#define SWAP_MOTORS 1
+#endif
+
 /* UART Pin Definitions - USART1 */
 #define UART_TX_PIN       GPIO_PIN_9   // PA9 - USART1_TX
 #define UART_RX_PIN       GPIO_PIN_10  // PA10 - USART1_RX
@@ -200,12 +263,20 @@ void Error_Handler(void);
 #define CMD_REVERSE       'R'
 #define CMD_LEFT          'L'
 #define CMD_RIGHT         'T'
+/* Alternate single-key controls (common keyboard layout):
+ * 'A'/'a' -> turn left, 'D'/'d' -> turn right
+ */
+#define CMD_LEFT_ALT      'A'
+#define CMD_RIGHT_ALT     'D'
 #define CMD_STOP          'S'
-#define CMD_SPEED_SLOW    '1'   // Set speed to 40%
+#define CMD_SPEED_SLOW    '1'   // Set speed to 50%
 #define CMD_SPEED_MEDIUM  '2'   // Set speed to 70%
 #define CMD_SPEED_FAST    '3'   // Set speed to 100%
 
-/* PID Tuning Commands (for runtime adjustment) */
+#if 0
+/* PID Tuning Commands (removed) - runtime PID tweaking not needed in this build.
+ * If you need to re-enable, change `#if 0` to `#if 1` and implement handlers.
+ */
 #define CMD_PID_KP_UP     'P'   // Increase Kp by 0.1
 #define CMD_PID_KP_DOWN   'p'   // Decrease Kp by 0.1
 #define CMD_PID_KI_UP     'I'   // Increase Ki by 0.01
@@ -214,13 +285,16 @@ void Error_Handler(void);
 #define CMD_PID_KD_DOWN   'j'   // Decrease Kd by 0.05 (changed from 'd')
 #define CMD_PID_RESET     'K'   // Reset PID to defaults
 #define CMD_PID_REPORT    'Q'   // Report current PID values
+#endif
 #define CMD_ACCEL_ENABLE  'M'   // Enable smooth acceleration/deceleration (M for sMooth)
 #define CMD_ACCEL_DISABLE 'Z'   // Disable acceleration (instant speed change)
-#define CMD_ACCEL_DISABLE_ALT 'D' // Alternate disable (was used for this before)
+#define CMD_ACCEL_DISABLE_ALT 'Y' // Alternate disable (changed to avoid conflict with CMD_RIGHT_ALT)
 /* Self-test command to cycle PWM speeds/directions (manual only) */
 #define CMD_SELF_TEST     'X'
 /* Ultrasonic debug command */
 #define CMD_ULTRASONIC_PING 'U'
+/* ToF ping command - request current ToF distances (left/right 45° sensors) */
+#define CMD_TOF_PING 'o'
 
 /* Enable a short PWM self-test at boot (runs once inside motor task). Set to 0 to disable. */
 #define ENABLE_PWM_SELF_TEST   0
@@ -229,6 +303,25 @@ void Error_Handler(void);
 /* Emergency stop timeout
  * Note: temporarily relaxed for debugging so motors don't stop while testing sensors. */
 #define SAFETY_TIMEOUT_MS 10000  // Emergency stop if no command for 10 seconds (set back to 2000 after debug)
+
+/* Timed turn configuration
+ * When receiving a turn-left/turn-right command from UART the controller will
+ * perform a one-shot spot turn for this duration (ms) and then stop. This
+ * provides an easy way to request ~90 degree turns without holding the
+ * command or wiring an IMU. Tune this value for your robot (depends on
+ * wheelbase, speed and motor power).
+ */
+#ifndef TURN_90_MS
+#define TURN_90_MS 350
+#endif
+
+/* Minimum and maximum allowed turn durations when scaling with speed */
+#ifndef TURN_90_MS_MIN
+#define TURN_90_MS_MIN 150
+#endif
+#ifndef TURN_90_MS_MAX
+#define TURN_90_MS_MAX 5000
+#endif
 
 /* Function Prototypes */
 void GPIO_Init(void);
@@ -252,6 +345,12 @@ uint16_t ToF_ReadSensor1(void);  // Left 45° sensor (mm)
 uint16_t ToF_ReadSensor2(void);  // Right 45° sensor (mm)
 bool ToF_DetectJunction(void);   // Check if junction is detected
 void ToF_Task(void const * argument);
+
+/* Junction coordination flags (shared across modules) */
+extern volatile bool junction_ack_received;
+extern volatile bool junction_mode_active;
+extern volatile bool junction_direction_received;
+extern volatile uint8_t junction_direction_cmd;
 
 /* Ultrasonic Sensor API */
 void Ultrasonic_Init(void);

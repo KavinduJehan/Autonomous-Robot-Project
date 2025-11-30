@@ -32,14 +32,14 @@ Supported Commands:
         'S' - Stop all motors
     
     Speed Control (PWM):
-        '1' - Set speed to SLOW (40%)
+        '1' - Set speed to SLOW (50%)
         '2' - Set speed to MEDIUM (70%)
         '3' - Set speed to FAST (100%)
     
     Acceleration Control:
         'M' - Enable smooth acceleration/deceleration
         'Z' - Disable acceleration (instant speed changes)
-        'D' - Disable acceleration (alternate)
+        'Y' - Disable acceleration (alternate)
 
 Usage:
     python3 rpi_motor_controller.py
@@ -78,8 +78,9 @@ class MotorCommand(Enum):
     SPEED_FAST = b'3'      # 100% speed
     ACCEL_ENABLE = b'M'    # Enable smooth acceleration/deceleration
     ACCEL_DISABLE = b'Z'   # Disable (instant speed changes)
-    ACCEL_DISABLE_ALT = b'D'  # Alternate disable command
+    ACCEL_DISABLE_ALT = b'Y'  # Alternate disable command (matches firmware change)
     ULTRASONIC_PING = b'U'  # Request ultrasonic distance measurement
+    TOF_PING = b'o'         # Request ToF distances (left/right 45° sensors)
     
     def __str__(self):
         return self.name.capitalize().replace('_', ' ')
@@ -98,7 +99,7 @@ class ControllerConfig:
 
 class SpeedLevel(Enum):
     """Motor speed levels."""
-    SLOW = (40, MotorCommand.SPEED_SLOW)      # 40% PWM
+    SLOW = (50, MotorCommand.SPEED_SLOW)      # 50% PWM (raised from 40%)
     MEDIUM = (70, MotorCommand.SPEED_MEDIUM)  # 70% PWM
     FAST = (100, MotorCommand.SPEED_FAST)     # 100% PWM
     
@@ -108,6 +109,12 @@ class SpeedLevel(Enum):
     
     def __str__(self):
         return f"{self.name} ({self.percentage}%)"
+
+# Turn timing constants (match firmware scaling: TURN_90_MS * 100 / speed%)
+# Keep this in sync with firmware `Core/Inc/main.h` (default 700 ms)
+TURN_90_MS = 350          # base ms for 90-degree turn at 100% speed (match firmware; user tuned)
+TURN_90_MS_MIN = 150
+TURN_90_MS_MAX = 5000
 
 
 class MotorController:
@@ -142,7 +149,12 @@ class MotorController:
         # Ultrasonic sensor data
         self.ultrasonic_left_cm = 0.0
         self.ultrasonic_right_cm = 0.0
+        self.ultrasonic_front_cm = 0.0
         self.last_ultrasonic_update = datetime.now()
+        # ToF sensor data (mm)
+        self.tof_left_mm = 0
+        self.tof_right_mm = 0
+        self.last_tof_update = datetime.now()
         
         # Callbacks
         self.on_connect: Optional[Callable] = None
@@ -246,7 +258,7 @@ class MotorController:
             if self.on_disconnect:
                 self.on_disconnect()
     
-    async def _send_command(self, command: MotorCommand) -> bool:
+    async def _send_command(self, command: MotorCommand, update_current: bool = True) -> bool:
         """
         Send command to motor controller.
         
@@ -271,7 +283,9 @@ class MotorController:
             await self.writer.drain()
             
             self.last_command_time = datetime.now()
-            self.current_command = command
+            # Only update the persistent current command when requested.
+            if update_current:
+                self.current_command = command
             
             if self.on_command_sent:
                 self.on_command_sent(command)
@@ -330,63 +344,167 @@ class MotorController:
             "CMD: X" - Command acknowledgment
         """
         try:
-            # Print all received lines for debugging
-            print(f"  📩 STM32: {line}")
-            
-            # Parse ultrasonic sensor data
-            if line.startswith("US ") or line.startswith("Wall "):
-                # Extract distances: "US A=15cm B=20cm" or "Wall L=15cm R=20cm"
+            # Process ultrasonic sensor data differently depending on message type.
+            # Only print distances when a full ping (A/B/C) is received or when explicitly requested.
+            # Otherwise, silently update left/right to avoid spamming the console.
+
+            # Full-format ping from STM32 uses 'A=.. B=.. C=..' (we print these)
+            if line.startswith("US A=") or (' C=' in line) or line.startswith("US ") and 'C=' in line:
+                # Print the full ping line and parse distances
+                print(f"  📩 STM32: {line}")
                 parts = line.split()
-                
                 for part in parts:
                     if '=' in part and 'cm' in part:
                         key, value = part.split('=')
                         distance_str = value.replace('cm', '').strip()
-                        
                         try:
                             distance = float(distance_str)
-                            
-                            # Update sensor values
-                            if key in ['A', 'L']:  # Left sensor
+                            if key in ['A', 'L']:
                                 self.ultrasonic_left_cm = distance
-                            elif key in ['B', 'R']:  # Right sensor
+                            elif key in ['B', 'R']:
                                 self.ultrasonic_right_cm = distance
-                            
+                            elif key in ['C', 'F']:
+                                self.ultrasonic_front_cm = distance
                             self.last_ultrasonic_update = datetime.now()
-                            
                         except ValueError:
                             pass
-                
-                # Warn if sensors not responding (distance = 0)
-                if self.ultrasonic_left_cm == 0 and self.ultrasonic_right_cm == 0:
-                    print("  ⚠️  WARNING: Both ultrasonic sensors reading 0cm (not connected?)")
-                elif self.ultrasonic_left_cm == 0:
-                    print("  ⚠️  WARNING: Left ultrasonic sensor reading 0cm (check wiring)")
-                elif self.ultrasonic_right_cm == 0:
-                    print("  ⚠️  WARNING: Right ultrasonic sensor reading 0cm (check wiring)")
-                
-                # Warn if obstacle detected
-                if self.ultrasonic_left_cm > 0 and self.ultrasonic_left_cm < 5:
-                    print(f"  🚨 OBSTACLE LEFT: {self.ultrasonic_left_cm}cm!")
-                if self.ultrasonic_right_cm > 0 and self.ultrasonic_right_cm < 5:
-                    print(f"  🚨 OBSTACLE RIGHT: {self.ultrasonic_right_cm}cm!")
-        
+
+                # Print concise summary for the full ping
+                left, right, front = self.get_ultrasonic_distances()
+                print(f"  ✓ Left: {left:.1f}cm, Right: {right:.1f}cm, Front: {front:.1f}cm")
+
+            # Periodic short-format status 'US L=.. R=..' — update silently (no repeated prints)
+            elif line.startswith("US "):
+                parts = line.split()
+                for part in parts:
+                    if '=' in part and 'cm' in part:
+                        key, value = part.split('=')
+                        distance_str = value.replace('cm', '').strip()
+                        try:
+                            distance = float(distance_str)
+                            if key in ['A', 'L']:
+                                self.ultrasonic_left_cm = distance
+                            elif key in ['B', 'R']:
+                                self.ultrasonic_right_cm = distance
+                            # do NOT overwrite front unless explicitly provided
+                            self.last_ultrasonic_update = datetime.now()
+                        except ValueError:
+                            pass
+
+            # Wall messages may include L/R or other debug info — print for visibility
+            elif line.startswith("Wall "):
+                print(f"  📩 STM32: {line}")
+                parts = line.split()
+                for part in parts:
+                    if '=' in part and 'cm' in part:
+                        key, value = part.split('=')
+                        distance_str = value.replace('cm', '').strip()
+                        try:
+                            distance = float(distance_str)
+                            if key in ['L', 'A']:
+                                self.ultrasonic_left_cm = distance
+                            elif key in ['R', 'B']:
+                                self.ultrasonic_right_cm = distance
+                            self.last_ultrasonic_update = datetime.now()
+                        except ValueError:
+                            pass
+
+            else:
+                # For other messages (ACKs, CMD:, ToF replies, debug) process/print appropriately.
+                # Detect ToF reply format (case-insensitive) and parse robustly
+                lower = line.lower()
+                if lower.startswith("tof ") or lower.startswith("tof l=") or "tof " in lower:
+                    print(f"  📩 STM32: {line}")
+                    parts = line.replace(',', ' ').split()
+                    parsed = False
+                    for part in parts:
+                        if '=' in part:
+                            key, value = part.split('=', 1)
+                            key = key.strip().upper()
+                            # Strip non-digits from value (allow optional 'mm')
+                            valstr = ''.join(ch for ch in value if ch.isdigit())
+                            if not valstr:
+                                continue
+                            try:
+                                v = int(valstr)
+                            except ValueError:
+                                continue
+                            parsed = True
+                            if key.startswith('L'):
+                                self.tof_left_mm = v
+                            elif key.startswith('R'):
+                                self.tof_right_mm = v
+                            self.last_tof_update = datetime.now()
+
+                    if parsed:
+                        # Interpret 8191 as OUT_OF_RANGE (firmware sentinel)
+                        left = self.tof_left_mm
+                        right = self.tof_right_mm
+                        if left == 8191 or right == 8191:
+                            lstr = 'OUT_OF_RANGE' if left == 8191 else f'{left}mm'
+                            rstr = 'OUT_OF_RANGE' if right == 8191 else f'{right}mm'
+                            print(f"  ✓ ToF Left: {lstr}, Right: {rstr}")
+                        else:
+                            # Warn if values are zero (likely no reply)
+                            if left == 0 and right == 0:
+                                print("  ⚠️  ToF values are 0 — possible missing reply or parsing issue")
+                            print(f"  ✓ ToF Left: {left}mm, Right: {right}mm")
+                    else:
+                        # Couldn't parse numeric values — print raw line for debugging
+                        print(f"  ⚠️  Unparsed ToF line: {line}")
+                else:
+                    # Junction notification from firmware: "JUNC L=... R=..."
+                    if 'junc' in lower:
+                        print(f"  ⚠️  Junction detected by STM32: {line}")
+                        # Auto-acknowledge the junction to the STM32 so it can continue
+                        # with the handshake. Send single-byte 'K' acknowledgement.
+                        try:
+                            asyncio.create_task(self._send_raw(b'K'))
+                            print("  → Sent ACK to STM32 for junction")
+                        except Exception as e:
+                            print(f"  ⚠️  Failed to send ACK: {e}")
+                        print("  ▶ Wait for operator to send direction ('a'/'d') or use API to send.")
+                    else:
+                    # Generic debug/ACK lines
+                    print(f"  📩 STM32: {line}")
+
         except Exception as e:
             print(f"  ⚠️  Error parsing UART response: {e}")
+
+    async def _send_raw(self, data: bytes) -> bool:
+        """
+        Send raw bytes over UART without modifying the persistent current command.
+        """
+        if not self.connected or not self.writer:
+            print("✗ Not connected")
+            return False
+        try:
+            time_since_last = (datetime.now() - self.last_command_time).total_seconds()
+            if time_since_last < self.config.command_interval:
+                await asyncio.sleep(self.config.command_interval - time_since_last)
+            self.writer.write(data)
+            await self.writer.drain()
+            self.last_command_time = datetime.now()
+            return True
+        except Exception as e:
+            print(f"✗ Failed to send raw data: {e}")
+            if self.on_error:
+                self.on_error(e)
+            return False
     
     def get_ultrasonic_distances(self) -> tuple[float, float]:
         """
         Get current ultrasonic sensor distances.
         
         Returns:
-            tuple: (left_cm, right_cm)
+            tuple: (left_cm, right_cm, front_cm)
         """
         age = (datetime.now() - self.last_ultrasonic_update).total_seconds()
         
         if age > 2.0:
             print("⚠️  Ultrasonic data stale (>2s old)")
         
-        return (self.ultrasonic_left_cm, self.ultrasonic_right_cm)
+        return (self.ultrasonic_left_cm, self.ultrasonic_right_cm, self.ultrasonic_front_cm)
     
     async def forward(self, duration: Optional[float] = None):
         """
@@ -399,7 +517,12 @@ class MotorController:
             print("⚠️  Emergency stop active. Reset required.")
             return
         
-        await self._send_command(MotorCommand.FORWARD)
+        # If this is a timed move, don't make it persistent so heartbeat
+        # doesn't re-send the movement command after the duration expires.
+        if duration:
+            await self._send_command(MotorCommand.FORWARD, update_current=False)
+        else:
+            await self._send_command(MotorCommand.FORWARD)
         print("▲ Moving forward")
         
         if duration:
@@ -417,7 +540,10 @@ class MotorController:
             print("⚠️  Emergency stop active. Reset required.")
             return
         
-        await self._send_command(MotorCommand.REVERSE)
+        if duration:
+            await self._send_command(MotorCommand.REVERSE, update_current=False)
+        else:
+            await self._send_command(MotorCommand.REVERSE)
         print("▼ Moving reverse")
         
         if duration:
@@ -435,7 +561,11 @@ class MotorController:
             print("⚠️  Emergency stop active. Reset required.")
             return
         
-        await self._send_command(MotorCommand.LEFT)
+        if duration:
+            # Timed turn should not become the persistent command
+            await self._send_command(MotorCommand.LEFT, update_current=False)
+        else:
+            await self._send_command(MotorCommand.LEFT)
         print("◄ Turning left")
         
         if duration:
@@ -453,7 +583,10 @@ class MotorController:
             print("⚠️  Emergency stop active. Reset required.")
             return
         
-        await self._send_command(MotorCommand.RIGHT)
+        if duration:
+            await self._send_command(MotorCommand.RIGHT, update_current=False)
+        else:
+            await self._send_command(MotorCommand.RIGHT)
         print("► Turning right")
         
         if duration:
@@ -511,6 +644,7 @@ class MotorController:
         # Store old values to detect if we got fresh data
         old_left = self.ultrasonic_left_cm
         old_right = self.ultrasonic_right_cm
+        old_front = self.ultrasonic_front_cm
         old_time = self.last_ultrasonic_update
         
         await self._send_command(MotorCommand.ULTRASONIC_PING)
@@ -523,13 +657,76 @@ class MotorController:
                 # Got fresh data!
                 break
         
-        left, right = self.get_ultrasonic_distances()
-        
+        left, right, front = self.get_ultrasonic_distances()
+
         if self.last_ultrasonic_update <= old_time:
             print("  ⚠️  No response from STM32 (check UART connection)")
-            print(f"  💾 Cached values: Left: {left:.1f}cm, Right: {right:.1f}cm")
+            print(f"  💾 Cached values: Left: {left:.1f}cm, Right: {right:.1f}cm, Front: {front:.1f}cm")
         else:
-            print(f"  ✓ Left: {left:.1f}cm, Right: {right:.1f}cm")
+            print(f"  ✓ Left: {left:.1f}cm, Right: {right:.1f}cm, Front: {front:.1f}cm")
+
+    async def request_tof_ping(self):
+        """Request ToF distances (left/right 45°) from STM32."""
+        old_time = self.last_tof_update
+
+        attempts = 3
+        for attempt in range(1, attempts + 1):
+            await self._send_command(MotorCommand.TOF_PING)
+            print(f"📡 ToF ping sent (attempt {attempt}/{attempts})")
+
+            # Wait up to 2 seconds for fresh response
+            waited = 0.0
+            timeout = 2.0
+            while waited < timeout:
+                await asyncio.sleep(0.1)
+                waited += 0.1
+                if self.last_tof_update > old_time:
+                    break
+
+            if self.last_tof_update > old_time:
+                # Got fresh data
+                # Interpret 8191 as OUT_OF_RANGE (firmware sentinel)
+                left = self.tof_left_mm
+                right = self.tof_right_mm
+                if left == 8191 or right == 8191:
+                    lstr = 'OUT_OF_RANGE' if left == 8191 else f'{left}mm'
+                    rstr = 'OUT_OF_RANGE' if right == 8191 else f'{right}mm'
+                    print(f"  ✓ ToF Left: {lstr}, Right: {rstr}")
+                else:
+                    print(f"  ✓ ToF Left: {left}mm, Right: {right}mm")
+                return
+
+            # No fresh data this attempt
+            print(f"  ⚠️  No ToF response (attempt {attempt}). Retrying...")
+
+        # After retries, still no response
+        print("  ✗ ToF: no response from STM32 after multiple attempts")
+        print(f"  💾 Last cached ToF: Left: {self.tof_left_mm}mm, Right: {self.tof_right_mm}mm")
+
+    def compute_turn_duration(self) -> float:
+        """
+        Compute a turn duration (seconds) for an approximate 90-degree spot turn
+        using the same scaling the firmware uses: turn_ms = (TURN_90_MS * 100) / speed%
+
+        Returns:
+            float: duration in seconds (clamped to min/max)
+        """
+        try:
+            speed_pct = int(self.current_speed.percentage)
+        except Exception:
+            speed_pct = 70
+
+        if speed_pct <= 0:
+            speed_pct = 70
+
+        turn_ms = (TURN_90_MS * 100) / speed_pct
+        # clamp
+        if turn_ms < TURN_90_MS_MIN:
+            turn_ms = TURN_90_MS_MIN
+        if turn_ms > TURN_90_MS_MAX:
+            turn_ms = TURN_90_MS_MAX
+
+        return float(turn_ms) / 1000.0
     
     async def _heartbeat_loop(self):
         """
@@ -602,7 +799,7 @@ class InteractiveController:
         print("  D/→ - Turn Right")
         print("  SPACE - Stop")
         print("\n⚡ Speed Controls:")
-        print("  1 - Slow Speed (40%)")
+        print("  1 - Slow Speed (50%)")
         print("  2 - Medium Speed (70%)")
         print("  3 - Fast Speed (100%)")
         print("\n🚀 Acceleration:")
@@ -610,6 +807,7 @@ class InteractiveController:
         print("  Z - Disable Accel (Instant)")
         print("\n📡 Sensors:")
         print("  U - Ultrasonic Ping (check wall distances)")
+        print("  O - ToF Ping (left/right 45° sensors)")
         print("\n🛡 Safety & System:")
         print("  E - Emergency Stop")
         print("  R - Reset Emergency Stop")
@@ -647,9 +845,12 @@ class InteractiveController:
                 elif cmd in ['s', '↓', 'down']:
                     await self.motor.reverse()
                 elif cmd in ['a', '←', 'left']:
-                    await self.motor.turn_left()
+                    # Compute duration to do an approximate 90° spot turn
+                    dur = self.motor.compute_turn_duration()
+                    await self.motor.turn_left(dur)
                 elif cmd in ['d', '→', 'right']:
-                    await self.motor.turn_right()
+                    dur = self.motor.compute_turn_duration()
+                    await self.motor.turn_right(dur)
                 elif cmd in [' ', 'space', '']:
                     await self.motor.stop()
                 elif cmd == '1':
@@ -664,6 +865,8 @@ class InteractiveController:
                     await self.motor.disable_acceleration()
                 elif cmd == 'u':
                     await self.motor.request_ultrasonic_ping()
+                elif cmd == 'o':
+                    await self.motor.request_tof_ping()
                 elif cmd == 'e':
                     await self.motor.stop()
                     self.motor.emergency_stop_active = True

@@ -125,23 +125,49 @@ void Ultrasonic_GPIO_Init(void)
 #if ULTRASONIC_ENABLED
     GPIO_InitTypeDef GPIO_InitStruct = {0};
     
-    /* Enable GPIOB clock */
+    /* Enable GPIO clocks for ports used by ultrasonic pins */
+    __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
 
-    /* Configure Ultrasonic Trigger pins (PB0, PB1) as Output */
-    GPIO_InitStruct.Pin = US_TRIG_A_PIN | US_TRIG_B_PIN;
+    /* Configure Ultrasonic Trigger pin A (may be on GPIOA) as Output */
+    GPIO_InitStruct.Pin = US_TRIG_A_PIN;
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(US_GPIO_PORT, &GPIO_InitStruct);
-    HAL_GPIO_WritePin(US_GPIO_PORT, US_TRIG_A_PIN | US_TRIG_B_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_Init(US_TRIG_A_PORT, &GPIO_InitStruct);
+    HAL_GPIO_WritePin(US_TRIG_A_PORT, US_TRIG_A_PIN, GPIO_PIN_RESET);
 
-    /* Configure Ultrasonic Echo pins (PB6, PB7) as Input with pulldown */
-    GPIO_InitStruct.Pin = US_ECHO_A_PIN | US_ECHO_B_PIN;
+    /* Configure Ultrasonic Trigger pin B (may be on GPIOB) as Output */
+    GPIO_InitStruct.Pin = US_TRIG_B_PIN;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init(US_TRIG_B_PORT, &GPIO_InitStruct);
+    HAL_GPIO_WritePin(US_TRIG_B_PORT, US_TRIG_B_PIN, GPIO_PIN_RESET);
+
+    /* If front sensor (C) exists on PB0, configure it as well */
+    /* If front sensor (C) exists on PB0, configure it as well */
+#if defined(US_TRIG_C_PIN) && defined(US_TRIG_C_PORT)
+    GPIO_InitStruct.Pin = US_TRIG_C_PIN;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init(US_TRIG_C_PORT, &GPIO_InitStruct);
+    HAL_GPIO_WritePin(US_TRIG_C_PORT, US_TRIG_C_PIN, GPIO_PIN_RESET);
+#endif
+
+    /* Configure Ultrasonic Echo pins individually as Input with pulldown */
+    GPIO_InitStruct.Pin = US_ECHO_A_PIN;
     GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
     GPIO_InitStruct.Pull = GPIO_PULLDOWN;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(US_GPIO_PORT, &GPIO_InitStruct);
+    HAL_GPIO_Init(US_ECHO_A_PORT, &GPIO_InitStruct);
+
+    GPIO_InitStruct.Pin = US_ECHO_B_PIN;
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(US_ECHO_B_PORT, &GPIO_InitStruct);
 #endif
 }
 
@@ -153,7 +179,9 @@ void Ultrasonic_Init(void)
 {
 #if ULTRASONIC_ENABLED
     DWT_Delay_Init();
-    HAL_GPIO_WritePin(US_GPIO_PORT, US_TRIG_A_PIN | US_TRIG_B_PIN, GPIO_PIN_RESET);
+    /* Ensure triggers are low on their respective ports */
+    HAL_GPIO_WritePin(US_TRIG_A_PORT, US_TRIG_A_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(US_TRIG_B_PORT, US_TRIG_B_PIN, GPIO_PIN_RESET);
 #endif
 }
 
@@ -164,7 +192,7 @@ void Ultrasonic_Init(void)
 uint16_t Ultrasonic_MeasureA(void)
 {
 #if ULTRASONIC_ENABLED
-    return Ultrasonic_Measure_Pin(US_GPIO_PORT, US_TRIG_A_PIN, US_GPIO_PORT, US_ECHO_A_PIN);
+    return Ultrasonic_Measure_Pin(US_TRIG_A_PORT, US_TRIG_A_PIN, US_ECHO_A_PORT, US_ECHO_A_PIN);
 #else
     return 0;
 #endif
@@ -177,7 +205,24 @@ uint16_t Ultrasonic_MeasureA(void)
 uint16_t Ultrasonic_MeasureB(void)
 {
 #if ULTRASONIC_ENABLED
-    return Ultrasonic_Measure_Pin(US_GPIO_PORT, US_TRIG_B_PIN, US_GPIO_PORT, US_ECHO_B_PIN);
+    return Ultrasonic_Measure_Pin(US_TRIG_B_PORT, US_TRIG_B_PIN, US_ECHO_B_PORT, US_ECHO_B_PIN);
+#else
+    return 0;
+#endif
+}
+
+/**
+ * @brief  Measure distance from front sensor (Sensor C)
+ * @retval Distance in centimeters (0-400), 0 on timeout
+ */
+uint16_t Ultrasonic_MeasureC(void)
+{
+#if ULTRASONIC_ENABLED
+#if defined(US_TRIG_C_PORT) && defined(US_ECHO_C_PORT) && defined(US_TRIG_C_PIN) && defined(US_ECHO_C_PIN)
+    return Ultrasonic_Measure_Pin(US_TRIG_C_PORT, US_TRIG_C_PIN, US_ECHO_C_PORT, US_ECHO_C_PIN);
+#else
+    return 0;
+#endif
 #else
     return 0;
 #endif

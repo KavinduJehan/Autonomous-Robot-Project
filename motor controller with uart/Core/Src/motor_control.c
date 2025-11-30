@@ -27,6 +27,16 @@ volatile uint8_t current_m2_in4 = 0;
 volatile bool motors_moving = false;
 volatile uint8_t last_movement_cmd = CMD_STOP;
 
+/* Helper: apply channel values respecting SWAP_MOTORS configuration */
+static void Motor_ApplyChannels(uint8_t l_fwd, uint8_t l_rev, uint8_t r_fwd, uint8_t r_rev)
+{
+#if SWAP_MOTORS
+    Motor_SetSpeed(r_fwd, r_rev, l_fwd, l_rev);
+#else
+    Motor_SetSpeed(l_fwd, l_rev, r_fwd, r_rev);
+#endif
+}
+
 /* Private function prototypes -----------------------------------------------*/
 
 /* Private functions ---------------------------------------------------------*/
@@ -122,11 +132,32 @@ void Motor_TIM5_PWM_Init(void)
  */
 void Motor_SetSpeed(uint8_t motor1_in1, uint8_t motor1_in2, uint8_t motor2_in3, uint8_t motor2_in4)
 {
-    // Convert percentage (0-100) to PWM value (0-PWM_PERIOD)
-    uint32_t pwm1_in1 = (motor1_in1 * PWM_PERIOD) / 100;
-    uint32_t pwm1_in2 = (motor1_in2 * PWM_PERIOD) / 100;
-    uint32_t pwm2_in3 = (motor2_in3 * PWM_PERIOD) / 100;
-    uint32_t pwm2_in4 = (motor2_in4 * PWM_PERIOD) / 100;
+    /* Apply per-motor scaling (defined in main.h) to compensate hardware mismatch.
+     * Scaling is a percentage where 100 means no change.
+     */
+    uint32_t m1_in1 = motor1_in1;
+    uint32_t m1_in2 = motor1_in2;
+    uint32_t m2_in3 = motor2_in3;
+    uint32_t m2_in4 = motor2_in4;
+
+#if (MOTOR1_PWM_SCALE != 100) || (MOTOR2_PWM_SCALE != 100)
+    /* scale forward/reverse channels independently; clamp to 100 */
+    m1_in1 = (m1_in1 * MOTOR1_PWM_SCALE) / 100;
+    m1_in2 = (m1_in2 * MOTOR1_PWM_SCALE) / 100;
+    if (m1_in1 > 100) m1_in1 = 100;
+    if (m1_in2 > 100) m1_in2 = 100;
+
+    m2_in3 = (m2_in3 * MOTOR2_PWM_SCALE) / 100;
+    m2_in4 = (m2_in4 * MOTOR2_PWM_SCALE) / 100;
+    if (m2_in3 > 100) m2_in3 = 100;
+    if (m2_in4 > 100) m2_in4 = 100;
+#endif
+
+    /* Convert percentage (0-100) to PWM value (0-PWM_PERIOD) */
+    uint32_t pwm1_in1 = (m1_in1 * PWM_PERIOD) / 100;
+    uint32_t pwm1_in2 = (m1_in2 * PWM_PERIOD) / 100;
+    uint32_t pwm2_in3 = (m2_in3 * PWM_PERIOD) / 100;
+    uint32_t pwm2_in4 = (m2_in4 * PWM_PERIOD) / 100;
     
     // Set PWM duty cycles
     __HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_1, pwm1_in1);
@@ -134,7 +165,7 @@ void Motor_SetSpeed(uint8_t motor1_in1, uint8_t motor1_in2, uint8_t motor2_in3, 
     __HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_3, pwm2_in3);
     __HAL_TIM_SET_COMPARE(&htim5, TIM_CHANNEL_4, pwm2_in4);
     
-    // Update current values
+    // Update current values (store logical commanded values)
     current_m1_in1 = motor1_in1;
     current_m1_in2 = motor1_in2;
     current_m2_in3 = motor2_in3;
@@ -229,7 +260,21 @@ void Motor_SetSpeed_Smooth(uint8_t target_m1_in1, uint8_t target_m1_in2, uint8_t
  */
 void Motor_Forward(uint8_t speed)
 {
-    Motor_SetSpeed_Smooth(speed, 0, speed, 0);
+    /* Compute per-motor forward/reverse PWM based on inversion flags.
+       motor1 = left, motor2 = right (logical). */
+    uint8_t m1_fwd = 0, m1_rev = 0, m2_fwd = 0, m2_rev = 0;
+
+    m1_fwd = (INVERT_MOTOR1_DIRECTION) ? 0 : speed;
+    m1_rev = (INVERT_MOTOR1_DIRECTION) ? speed : 0;
+    m2_fwd = (INVERT_MOTOR2_DIRECTION) ? 0 : speed;
+    m2_rev = (INVERT_MOTOR2_DIRECTION) ? speed : 0;
+
+#if SWAP_MOTORS
+    /* Swap logical motor order if needed */
+    Motor_SetSpeed_Smooth(m2_fwd, m2_rev, m1_fwd, m1_rev);
+#else
+    Motor_SetSpeed_Smooth(m1_fwd, m1_rev, m2_fwd, m2_rev);
+#endif
 }
 
 /**
@@ -239,7 +284,19 @@ void Motor_Forward(uint8_t speed)
  */
 void Motor_Reverse(uint8_t speed)
 {
-    Motor_SetSpeed_Smooth(0, speed, 0, speed);
+    uint8_t m1_fwd = 0, m1_rev = 0, m2_fwd = 0, m2_rev = 0;
+
+    /* Reverse = logical reverse -> swap forward/reverse per motor */
+    m1_fwd = (INVERT_MOTOR1_DIRECTION) ? speed : 0;
+    m1_rev = (INVERT_MOTOR1_DIRECTION) ? 0 : speed;
+    m2_fwd = (INVERT_MOTOR2_DIRECTION) ? speed : 0;
+    m2_rev = (INVERT_MOTOR2_DIRECTION) ? 0 : speed;
+
+#if SWAP_MOTORS
+    Motor_SetSpeed_Smooth(m2_fwd, m2_rev, m1_fwd, m1_rev);
+#else
+    Motor_SetSpeed_Smooth(m1_fwd, m1_rev, m2_fwd, m2_rev);
+#endif
 }
 
 /**
@@ -249,7 +306,19 @@ void Motor_Reverse(uint8_t speed)
  */
 void Motor_Left(uint8_t speed)
 {
-    Motor_SetSpeed_Smooth(0, speed, speed, 0);
+    /* Spot turn left: left motor reverse, right motor forward */
+    uint8_t l_fwd = 0, l_rev = 0, r_fwd = 0, r_rev = 0;
+
+    l_fwd = (INVERT_MOTOR1_DIRECTION) ? speed : 0;
+    l_rev = (INVERT_MOTOR1_DIRECTION) ? 0 : speed;
+    r_fwd = (INVERT_MOTOR2_DIRECTION) ? 0 : speed;
+    r_rev = (INVERT_MOTOR2_DIRECTION) ? speed : 0;
+
+#if SWAP_MOTORS
+    Motor_SetSpeed_Smooth(r_fwd, r_rev, l_fwd, l_rev);
+#else
+    Motor_SetSpeed_Smooth(l_fwd, l_rev, r_fwd, r_rev);
+#endif
 }
 
 /**
@@ -259,7 +328,19 @@ void Motor_Left(uint8_t speed)
  */
 void Motor_Right(uint8_t speed)
 {
-    Motor_SetSpeed_Smooth(speed, 0, 0, speed);
+    /* Spot turn right: left motor forward, right motor reverse */
+    uint8_t l_fwd = 0, l_rev = 0, r_fwd = 0, r_rev = 0;
+
+    l_fwd = (INVERT_MOTOR1_DIRECTION) ? 0 : speed;
+    l_rev = (INVERT_MOTOR1_DIRECTION) ? speed : 0;
+    r_fwd = (INVERT_MOTOR2_DIRECTION) ? speed : 0;
+    r_rev = (INVERT_MOTOR2_DIRECTION) ? 0 : speed;
+
+#if SWAP_MOTORS
+    Motor_SetSpeed_Smooth(r_fwd, r_rev, l_fwd, l_rev);
+#else
+    Motor_SetSpeed_Smooth(l_fwd, l_rev, r_fwd, r_rev);
+#endif
 }
 
 /**
@@ -270,7 +351,17 @@ void Motor_Right(uint8_t speed)
  */
 void Motor_ForwardDifferential(uint8_t left_speed, uint8_t right_speed)
 {
-    Motor_SetSpeed(left_speed, 0, right_speed, 0);
+    /* Differential forward with independent left/right speeds */
+    uint8_t l_fwd = (INVERT_MOTOR1_DIRECTION) ? 0 : left_speed;
+    uint8_t l_rev = (INVERT_MOTOR1_DIRECTION) ? left_speed : 0;
+    uint8_t r_fwd = (INVERT_MOTOR2_DIRECTION) ? 0 : right_speed;
+    uint8_t r_rev = (INVERT_MOTOR2_DIRECTION) ? right_speed : 0;
+
+#if SWAP_MOTORS
+    Motor_SetSpeed(r_fwd, r_rev, l_fwd, l_rev);
+#else
+    Motor_SetSpeed(l_fwd, l_rev, r_fwd, r_rev);
+#endif
 }
 
 /**
@@ -289,4 +380,103 @@ void Motor_Stop(void)
 void Motor_Stop_Smooth(void)
 {
     Motor_SetSpeed_Smooth(0, 0, 0, 0);
+}
+
+/**
+ * @brief Perform a smooth spot turn: ramp up then ramp down over duration
+ * @param speed: peak turn speed (0-100)
+ * @param duration_ms: total duration of the turn in milliseconds
+ * @param left: true -> turn left, false -> turn right
+ * @note This is a blocking call. It uses Motor_SetSpeed to apply per-step
+ *       PWM values and respects INVERT/SWAP configuration.
+ */
+void Motor_SpotTurnSmooth(uint8_t speed, uint32_t duration_ms, bool left)
+{
+    if (duration_ms < 2 || speed == 0)
+    {
+        return;
+    }
+
+    /* Define explicit ramp-up time (ms) per user's request (first ~300ms) */
+    uint32_t ramp_up_ms = (duration_ms > 300) ? 300 : (duration_ms / 2);
+    if (ramp_up_ms > duration_ms - 1) ramp_up_ms = duration_ms / 2;
+    uint32_t ramp_down_ms = duration_ms - ramp_up_ms;
+
+    /* Granularity: use accel delay as step interval for predictable timing */
+    uint32_t up_steps = (ramp_up_ms + ACCEL_DELAY_MS - 1) / ACCEL_DELAY_MS;
+    uint32_t down_steps = (ramp_down_ms + DECEL_DELAY_MS - 1) / DECEL_DELAY_MS;
+    if (up_steps == 0) up_steps = 1;
+    if (down_steps == 0) down_steps = 1;
+
+    /* Compute per-step increment/decrement */
+    uint32_t up_step_value = (speed + up_steps - 1) / up_steps; /* ceil */
+    uint32_t down_step_value = (speed + down_steps - 1) / down_steps;
+
+        /* Helper to apply logical per-motor channel values (handled by
+         * file-scope Motor_ApplyChannels). */
+
+    /* Start from stopped (ensure safe) */
+    Motor_Stop_Smooth();
+
+    /* Ramp up */
+    uint32_t current = 0;
+    for (uint32_t step = 0; step < up_steps; ++step)
+    {
+        current += up_step_value;
+        if (current > speed) current = speed;
+
+        if (left)
+        {
+            /* left turn: left motor reverse, right motor forward */
+            uint8_t l_fwd = (INVERT_MOTOR1_DIRECTION) ? current : 0;
+            uint8_t l_rev = (INVERT_MOTOR1_DIRECTION) ? 0 : current;
+            uint8_t r_fwd = (INVERT_MOTOR2_DIRECTION) ? 0 : current;
+            uint8_t r_rev = (INVERT_MOTOR2_DIRECTION) ? current : 0;
+            Motor_ApplyChannels(l_fwd, l_rev, r_fwd, r_rev);
+        }
+        else
+        {
+            /* right turn: left motor forward, right motor reverse */
+            uint8_t l_fwd = (INVERT_MOTOR1_DIRECTION) ? 0 : current;
+            uint8_t l_rev = (INVERT_MOTOR1_DIRECTION) ? current : 0;
+            uint8_t r_fwd = (INVERT_MOTOR2_DIRECTION) ? current : 0;
+            uint8_t r_rev = (INVERT_MOTOR2_DIRECTION) ? 0 : current;
+            Motor_ApplyChannels(l_fwd, l_rev, r_fwd, r_rev);
+        }
+
+        osDelay(ACCEL_DELAY_MS);
+    }
+
+    /* Maintain peak for a minimal tick if needed */
+    if (ramp_down_ms > 0 && down_steps > 0)
+    {
+        /* Ramp down */
+        for (uint32_t step = 0; step < down_steps; ++step)
+        {
+            if (current <= down_step_value) current = 0;
+            else current -= down_step_value;
+
+            if (left)
+            {
+                uint8_t l_fwd = (INVERT_MOTOR1_DIRECTION) ? current : 0;
+                uint8_t l_rev = (INVERT_MOTOR1_DIRECTION) ? 0 : current;
+                uint8_t r_fwd = (INVERT_MOTOR2_DIRECTION) ? 0 : current;
+                uint8_t r_rev = (INVERT_MOTOR2_DIRECTION) ? current : 0;
+                Motor_ApplyChannels(l_fwd, l_rev, r_fwd, r_rev);
+            }
+            else
+            {
+                uint8_t l_fwd = (INVERT_MOTOR1_DIRECTION) ? 0 : current;
+                uint8_t l_rev = (INVERT_MOTOR1_DIRECTION) ? current : 0;
+                uint8_t r_fwd = (INVERT_MOTOR2_DIRECTION) ? current : 0;
+                uint8_t r_rev = (INVERT_MOTOR2_DIRECTION) ? 0 : current;
+                Motor_ApplyChannels(l_fwd, l_rev, r_fwd, r_rev);
+            }
+
+            osDelay(DECEL_DELAY_MS);
+        }
+    }
+
+    /* Ensure fully stopped at the end */
+    Motor_Stop_Smooth();
 }
